@@ -1,0 +1,12 @@
+{
+  "name": "global-news-monitor",
+  "version": "1.0.0",
+  "private": true,
+  "description": "全球主流媒体时政监控仪表盘",
+  "scripts": {
+    "dev:worker": "cd worker && npm run dev",
+    "deploy:worker": "cd worker && npm run deploy",
+    "deploy:pages": "cd frontend && npx wrangler pages deploy . --project-name=global-news-monitor",
+    "db:init": "cd worker && npm run db:init"
+  }
+}
