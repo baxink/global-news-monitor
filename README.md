@@ -2,6 +2,8 @@
 
 覆盖 10 个国家、30 家主流媒体的时政新闻聚合仪表盘。
 
+GitHub Pages: https://baxink.github.io/global-news-monitor/
+
 ## 功能
 
 - 按国家筛选新闻
