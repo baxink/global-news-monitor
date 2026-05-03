@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  const API_BASE = window.__API_BASE__ || '';
+  const API_BASE = 'https://global-news-monitor.fanxj137616.workers.dev';
   let allItems = [];
   let currentCountry = '';
   let searchQuery = '';
