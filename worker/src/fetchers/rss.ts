@@ -35,7 +35,7 @@ export async function fetchRss(url: string, timeoutMs: number = 10000): Promise<
     const text = await res.text();
     const items: RawArticle[] = [];
 
-    const itemRegex = /<item[^>]*>([\s\S]*?)<\/item>/gi;
+    const itemRegex = /<item(?:\s[^>]*)?>([\s\S]*?)<\/item>/gi;
     let match;
 
     while ((match = itemRegex.exec(text)) !== null) {

@@ -125,7 +125,7 @@ async function summarizeInChinese(env: Env, article: NormalizedArticle): Promise
       Authorization: `Bearer ${env.OPENAI_API_KEY}`,
     },
     body: JSON.stringify({
-      model: 'gpt-5-mini',
+      model: 'gpt-4o-mini',
       input: prompt,
     }),
   });
