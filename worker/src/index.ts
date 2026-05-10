@@ -1,10 +1,12 @@
 import { getEnabledSources, type MediaSource } from './sources';
 import { normalizeArticles, type NormalizedArticle } from './normalize';
 import { fetchRss } from './fetchers/rss';
+import { fetchHtml } from './fetchers/html';
 
 interface Env {
   DB: D1Database;
   FRONTEND_ORIGIN: string;
+  OPENAI_API_KEY?: string;
 }
 
 interface ArticleRow {
@@ -21,11 +23,6 @@ interface ArticleRow {
   lang: string;
 }
 
-interface MetaRow {
-  country: string;
-  count: number;
-}
-
 interface IngestRow {
   id: string;
   started_at: string;
@@ -35,175 +32,163 @@ interface IngestRow {
   failure_count: number;
 }
 
+interface DailyDigestRow {
+  digest_date: string;
+  article_id: string;
+  source_id: string;
+  section: string;
+  title_en: string;
+  title_zh: string;
+  summary_en: string;
+  summary_zh: string;
+  url: string;
+  image_url: string;
+  published_at: string;
+  selected_at: string;
+}
+
+interface DigestPayload {
+  digestDate: string;
+  section: string;
+  title: string;
+  titleEn: string;
+  summary: string;
+  summaryEn: string;
+  url: string;
+  imageUrl: string;
+  publishedAt: string;
+  selectedAt: string;
+  sourceId: string;
+  mediaName: string;
+}
+
+const DEFAULT_FRONTEND_ORIGIN = 'https://baxink.github.io';
+
 function corsHeaders(origin: string): Record<string, string> {
   return {
     'Access-Control-Allow-Origin': origin,
-    'Access-Control-Allow-Methods': 'GET, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
     'Cache-Control': 'public, max-age=300',
   };
 }
 
-async function handleNews(env: Env, request: Request): Promise<Response> {
-  const url = new URL(request.request.url);
-  const country = url.searchParams.get('country');
-  const q = url.searchParams.get('q');
-  const limit = Math.min(parseInt(url.searchParams.get('limit') || '90'), 200);
+function getRequestOrigin(request: Request): string {
+  const origin = request.headers.get('Origin');
+  return origin || DEFAULT_FRONTEND_ORIGIN;
+}
 
-  let query = 'SELECT * FROM articles';
-  const conditions: string[] = [];
-  const params: any[] = [];
+function toDigestDate(date: Date = new Date()): string {
+  const offsetMs = 8 * 60 * 60 * 1000;
+  return new Date(date.getTime() + offsetMs).toISOString().slice(0, 10);
+}
 
-  if (country) {
-    conditions.push('country = ?');
-    params.push(country);
+function getRotatingSource(sources: MediaSource[], digestDate: string): MediaSource[] {
+  if (sources.length === 0) return [];
+  const anchor = new Date(`${digestDate}T00:00:00+08:00`).getTime();
+  const index = Math.floor(anchor / 86400000) % sources.length;
+  return [...sources.slice(index), ...sources.slice(0, index)];
+}
+
+function normalizeSectionLabel(section: string): string {
+  return section
+    .split('-')
+    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function stripMarkdownFence(text: string): string {
+  return text.replace(/^```json\s*/i, '').replace(/```$/i, '').trim();
+}
+
+async function summarizeInChinese(env: Env, article: NormalizedArticle): Promise<{ titleZh: string; summaryZh: string }> {
+  if (!env.OPENAI_API_KEY) {
+    return {
+      titleZh: article.title,
+      summaryZh: article.summary || article.title,
+    };
   }
 
-  if (conditions.length > 0) {
-    query += ' WHERE ' + conditions.join(' AND ');
+  const prompt = [
+    '请把下面这篇 Nature 文章信息整理成简体中文。',
+    '要求：标题简洁准确；摘要 2-3 句，忠于原意，不要编造。',
+    '只返回 JSON，格式为 {"titleZh":"...","summaryZh":"..."}。',
+    `原标题：${article.title}`,
+    `英文摘要：${article.summary || article.title}`,
+    `链接：${article.url}`,
+  ].join('\n');
+
+  const res = await fetch('https://api.openai.com/v1/responses', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${env.OPENAI_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: 'gpt-5-mini',
+      input: prompt,
+    }),
+  });
+
+  if (!res.ok) {
+    return {
+      titleZh: article.title,
+      summaryZh: article.summary || article.title,
+    };
   }
 
-  query += ' ORDER BY published_at DESC, fetched_at DESC LIMIT ?';
-  params.push(limit);
+  const data = await res.json() as {
+    output_text?: string;
+    output?: Array<{
+      content?: Array<{
+        type?: string;
+        text?: string;
+      }>;
+    }>;
+  };
 
-  const { results } = await env.DB.prepare(query).bind(...params).all<ArticleRow>();
+  const outputText = data.output_text || data.output?.flatMap(item => item.content || []).find(item => item.type === 'output_text')?.text || '';
+  const text = stripMarkdownFence(outputText);
 
-  let items = results.map(row => ({
-    id: row.id,
-    country: row.country,
-    mediaName: row.media_name,
-    title: row.title,
-    summary: row.summary,
+  try {
+    const parsed = JSON.parse(text) as { titleZh?: string; summaryZh?: string };
+    return {
+      titleZh: parsed.titleZh?.trim() || article.title,
+      summaryZh: parsed.summaryZh?.trim() || article.summary || article.title,
+    };
+  } catch {
+    return {
+      titleZh: article.title,
+      summaryZh: article.summary || article.title,
+    };
+  }
+}
+
+function mapDigestRow(row: DailyDigestRow & { media_name?: string }): DigestPayload {
+  return {
+    digestDate: row.digest_date,
+    section: normalizeSectionLabel(row.section),
+    title: row.title_zh,
+    titleEn: row.title_en,
+    summary: row.summary_zh,
+    summaryEn: row.summary_en,
     url: row.url,
     imageUrl: row.image_url,
     publishedAt: row.published_at,
-    fetchedAt: row.fetched_at,
-    lang: row.lang,
-  }));
-
-  if (q) {
-    const query = q.toLowerCase();
-    items = items.filter(
-      item =>
-        item.title.toLowerCase().includes(query) ||
-        item.summary.toLowerCase().includes(query)
-    );
-  }
-
-  const updatedAt = results.length > 0 ? results[0].fetched_at : new Date().toISOString();
-
-  return new Response(
-    JSON.stringify({ updatedAt, total: items.length, items }),
-    {
-      headers: {
-        'Content-Type': 'application/json',
-        ...corsHeaders(env.FRONTEND_ORIGIN),
-      },
-    }
-  );
+    selectedAt: row.selected_at,
+    sourceId: row.source_id,
+    mediaName: row.media_name || 'Nature',
+  };
 }
 
-async function handleMeta(env: Env): Promise<Response> {
-  const countries = await env.DB.prepare(
-    'SELECT DISTINCT country FROM articles ORDER BY country'
-  ).all<{ country: string }>();
+async function fetchArticles(source: MediaSource): Promise<NormalizedArticle[]> {
+  const raw = source.parserType === 'html'
+    ? await fetchHtml(source.feedUrl)
+    : await fetchRss(source.feedUrl);
 
-  const sourceCount = await env.DB.prepare(
-    'SELECT COUNT(*) as count FROM media_sources WHERE enabled = 1'
-  ).first<{ count: number }>();
+  if (raw.length === 0) return [];
 
-  const lastRun = await env.DB.prepare(
-    'SELECT * FROM ingest_runs ORDER BY started_at DESC LIMIT 1'
-  ).first<IngestRow>();
-
-  const articleCount = await env.DB.prepare(
-    'SELECT COUNT(*) as count FROM articles'
-  ).first<{ count: number }>();
-
-  return new Response(
-    JSON.stringify({
-      countries: countries.map(r => r.country),
-      sourceCount: sourceCount?.count || 0,
-      articleCount: articleCount?.count || 0,
-      lastUpdate: lastRun?.finished_at || lastRun?.started_at || null,
-      lastRunStatus: lastRun?.status || null,
-    }),
-    {
-      headers: {
-        'Content-Type': 'application/json',
-        ...corsHeaders(env.FRONTEND_ORIGIN),
-      },
-    }
-  );
-}
-
-async function handleIngest(env: Env): Promise<Response> {
-  const runId = `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-  const startedAt = new Date().toISOString();
-
-  await env.DB.prepare(
-    'INSERT INTO ingest_runs (id, started_at, status) VALUES (?, ?, ?)'
-  ).bind(runId, startedAt, 'running').run();
-
-  const sources = getEnabledSources();
-  let successCount = 0;
-  let failureCount = 0;
-  const errors: string[] = [];
-
-  const CONCURRENCY = 5;
-  for (let i = 0; i < sources.length; i += CONCURRENCY) {
-    const batch = sources.slice(i, i + CONCURRENCY);
-    const results = await Promise.allSettled(
-      batch.map(source => ingestSource(env, source))
-    );
-
-    for (let j = 0; j < results.length; j++) {
-      const result = results[j];
-      if (result.status === 'fulfilled' && result.value > 0) {
-        successCount++;
-      } else {
-        failureCount++;
-        const src = batch[j];
-        const reason = result.status === 'rejected' ? String(result.reason) : 'no articles';
-        errors.push(`${src.id}: ${reason}`);
-      }
-    }
-  }
-
-  const finishedAt = new Date().toISOString();
-  const status = failureCount === sources.length ? 'failed' : 'success';
-
-  await env.DB.prepare(
-    'UPDATE ingest_runs SET finished_at = ?, status = ?, success_count = ?, failure_count = ?, notes = ? WHERE id = ?'
-  ).bind(finishedAt, status, successCount, failureCount, errors.join('\n') || null, runId).run();
-
-  await env.DB.prepare(
-    "DELETE FROM articles WHERE fetched_at < datetime('now', '-7 days')"
-  ).run();
-
-  return new Response(
-    JSON.stringify({
-      runId,
-      status,
-      successCount,
-      failureCount,
-      totalSources: sources.length,
-      errors: errors.length > 0 ? errors : undefined,
-    }),
-    {
-      headers: {
-        'Content-Type': 'application/json',
-        ...corsHeaders(env.FRONTEND_ORIGIN),
-      },
-    }
-  );
-}
-
-async function ingestSource(env: Env, source: MediaSource): Promise<number> {
-  const raw = await fetchRss(source.feedUrl);
-  if (raw.length === 0) return 0;
-
-  const articles = normalizeArticles(
+  return normalizeArticles(
     raw,
     source.id,
     source.country,
@@ -211,6 +196,10 @@ async function ingestSource(env: Env, source: MediaSource): Promise<number> {
     source.language,
     source.articleLimit
   );
+}
+
+async function upsertArticles(env: Env, articles: NormalizedArticle[]): Promise<void> {
+  if (articles.length === 0) return;
 
   const stmts = articles.map(article =>
     env.DB.prepare(
@@ -232,35 +221,212 @@ async function ingestSource(env: Env, source: MediaSource): Promise<number> {
   );
 
   await env.DB.batch(stmts);
-  return articles.length;
+}
+
+async function selectDailyDigest(env: Env, sources: MediaSource[], articles: NormalizedArticle[], digestDate: string): Promise<DailyDigestRow | null> {
+  const orderedSources = getRotatingSource(sources, digestDate);
+  const recentRows = await env.DB.prepare(
+    'SELECT article_id FROM daily_digest ORDER BY digest_date DESC LIMIT 14'
+  ).all<{ article_id: string }>();
+  const recentIds = new Set(recentRows.results.map(row => row.article_id));
+
+  for (const source of orderedSources) {
+    const candidates = articles
+      .filter(article => article.sourceId === source.id)
+      .sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt));
+
+    const selected = candidates.find(article => !recentIds.has(article.id)) || candidates[0];
+    if (!selected) continue;
+
+    const localized = await summarizeInChinese(env, selected);
+
+    await env.DB.prepare(
+      `INSERT OR REPLACE INTO daily_digest (
+        digest_date, article_id, source_id, section, title_en, title_zh, summary_en, summary_zh, url, image_url, published_at, selected_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(
+      digestDate,
+      selected.id,
+      source.id,
+      source.section,
+      selected.title,
+      localized.titleZh,
+      selected.summary,
+      localized.summaryZh,
+      selected.url,
+      selected.imageUrl,
+      selected.publishedAt,
+      new Date().toISOString()
+    ).run();
+
+    const digest = await env.DB.prepare(
+      'SELECT * FROM daily_digest WHERE digest_date = ? LIMIT 1'
+    ).bind(digestDate).first<DailyDigestRow>();
+
+    return digest || null;
+  }
+
+  return null;
+}
+
+async function runIngest(env: Env): Promise<{ runId: string; status: string; successCount: number; failureCount: number; totalSources: number; digestDate: string; digestCreated: boolean; errors?: string[] }> {
+  const runId = `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const startedAt = new Date().toISOString();
+
+  await env.DB.prepare(
+    'INSERT INTO ingest_runs (id, started_at, status) VALUES (?, ?, ?)'
+  ).bind(runId, startedAt, 'running').run();
+
+  const sources = getEnabledSources();
+  const articles: NormalizedArticle[] = [];
+  let successCount = 0;
+  let failureCount = 0;
+  const errors: string[] = [];
+
+  for (const source of sources) {
+    try {
+      const sourceArticles = await fetchArticles(source);
+      if (sourceArticles.length === 0) {
+        failureCount++;
+        errors.push(`${source.id}: no articles`);
+        continue;
+      }
+      articles.push(...sourceArticles);
+      await upsertArticles(env, sourceArticles);
+      successCount++;
+    } catch (error) {
+      failureCount++;
+      errors.push(`${source.id}: ${String(error)}`);
+    }
+  }
+
+  const digestDate = toDigestDate();
+  const existingDigest = await env.DB.prepare(
+    'SELECT * FROM daily_digest WHERE digest_date = ? LIMIT 1'
+  ).bind(digestDate).first<DailyDigestRow>();
+
+  const digest = existingDigest || await selectDailyDigest(env, sources, articles, digestDate);
+  const status = successCount > 0 ? 'success' : 'failed';
+  const finishedAt = new Date().toISOString();
+
+  await env.DB.prepare(
+    'UPDATE ingest_runs SET finished_at = ?, status = ?, success_count = ?, failure_count = ?, notes = ? WHERE id = ?'
+  ).bind(finishedAt, status, successCount, failureCount, errors.join('\n') || null, runId).run();
+
+  await env.DB.prepare(
+    "DELETE FROM articles WHERE fetched_at < datetime('now', '-30 days')"
+  ).run();
+
+  return {
+    runId,
+    status,
+    successCount,
+    failureCount,
+    totalSources: sources.length,
+    digestDate,
+    digestCreated: Boolean(digest),
+    errors: errors.length > 0 ? errors : undefined,
+  };
+}
+
+async function handleDaily(env: Env, request: Request): Promise<Response> {
+  const today = toDigestDate();
+  const digest = await env.DB.prepare(
+    `SELECT d.*, a.media_name
+     FROM daily_digest d
+     LEFT JOIN articles a ON a.id = d.article_id
+     WHERE d.digest_date = ?
+     LIMIT 1`
+  ).bind(today).first<DailyDigestRow & { media_name?: string }>();
+
+  if (!digest) {
+    return new Response(JSON.stringify({ error: 'Daily digest not ready' }), {
+      status: 404,
+      headers: {
+        'Content-Type': 'application/json',
+        ...corsHeaders(getRequestOrigin(request)),
+      },
+    });
+  }
+
+  return new Response(JSON.stringify(mapDigestRow(digest)), {
+    headers: {
+      'Content-Type': 'application/json',
+      ...corsHeaders(getRequestOrigin(request)),
+    },
+  });
+}
+
+async function handleMeta(env: Env, request: Request): Promise<Response> {
+  const sourceCount = await env.DB.prepare(
+    'SELECT COUNT(*) as count FROM media_sources WHERE enabled = 1'
+  ).first<{ count: number }>();
+
+  const lastRun = await env.DB.prepare(
+    'SELECT * FROM ingest_runs ORDER BY started_at DESC LIMIT 1'
+  ).first<IngestRow>();
+
+  const articleCount = await env.DB.prepare(
+    'SELECT COUNT(*) as count FROM articles'
+  ).first<{ count: number }>();
+
+  const digestCount = await env.DB.prepare(
+    'SELECT COUNT(*) as count FROM daily_digest'
+  ).first<{ count: number }>();
+
+  return new Response(
+    JSON.stringify({
+      sourceCount: sourceCount?.count || 0,
+      articleCount: articleCount?.count || 0,
+      digestCount: digestCount?.count || 0,
+      lastUpdate: lastRun?.finished_at || lastRun?.started_at || null,
+      lastRunStatus: lastRun?.status || null,
+    }),
+    {
+      headers: {
+        'Content-Type': 'application/json',
+        ...corsHeaders(getRequestOrigin(request)),
+      },
+    }
+  );
+}
+
+async function handleIngest(env: Env, request: Request): Promise<Response> {
+  const result = await runIngest(env);
+  return new Response(JSON.stringify(result), {
+    headers: {
+      'Content-Type': 'application/json',
+      ...corsHeaders(getRequestOrigin(request)),
+    },
+  });
 }
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    const url = new URL(request.request.url);
+    const url = new URL(request.url);
 
     if (request.method === 'OPTIONS') {
       return new Response(null, {
-        headers: corsHeaders(env.FRONTEND_ORIGIN),
+        headers: corsHeaders(getRequestOrigin(request)),
       });
     }
 
-    if (url.pathname === '/api/news' && request.method === 'GET') {
-      return handleNews(env, request);
+    if (url.pathname === '/api/daily' && request.method === 'GET') {
+      return handleDaily(env, request);
     }
 
     if (url.pathname === '/api/meta' && request.method === 'GET') {
-      return handleMeta(env);
+      return handleMeta(env, request);
     }
 
     if (url.pathname === '/api/ingest' && request.method === 'POST') {
-      return handleIngest(env);
+      return handleIngest(env, request);
     }
 
     return new Response('Not Found', { status: 404 });
   },
 
-  async scheduled(event: ScheduledEvent, env: Env): Promise<void> {
-    await handleIngest(env);
+  async scheduled(_event: ScheduledEvent, env: Env): Promise<void> {
+    await runIngest(env);
   },
 };

@@ -1,14 +1,14 @@
-name = "global-news-monitor"
+name = "nature-daily"
 main = "src/index.ts"
 compatibility_date = "2024-10-18"
 
 [triggers]
-crons = ["0 */6 * * *"]
+crons = ["0 22 * * *"]
 
 [vars]
-FRONTEND_ORIGIN = "https://global-news-monitor.pages.dev"
+FRONTEND_ORIGIN = "https://baxink.github.io"
 
 [[d1_databases]]
 binding = "DB"
-database_name = "global-news-monitor-db"
-database_id = "PLACEHOLDER_D1_ID"
+database_name = "nature-daily-db"
+database_id = "222ce2f9-d92f-493d-b80e-4986de5a0be0"

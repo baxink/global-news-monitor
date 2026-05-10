@@ -12,5 +12,10 @@
     "resolveJsonModule": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src/**/*.ts"]
+  "include": [
+    "src/index.ts",
+    "src/normalize.ts",
+    "src/sources.ts",
+    "src/fetchers/**/*.ts"
+  ]
 }

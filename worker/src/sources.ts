@@ -1,4 +1,4 @@
-import mediaSourcesJson from '../shared/media-sources.json';
+import mediaSourcesJson from '../../shared/media-sources.json';
 
 export interface MediaSource {
   id: string;

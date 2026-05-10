@@ -3,44 +3,27 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>全球主流媒体时政监控</title>
+  <title>nature-daily</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <header class="header">
-    <div class="header-content">
-      <h1 class="title">全球主流媒体时政监控</h1>
-      <p class="subtitle">
-        覆盖 10 国主流媒体 · 每 6 小时自动更新 · 点击标题直达原文
-      </p>
+  <header class="hero">
+    <div class="hero-inner">
+      <p class="eyebrow">Nature Daily Digest</p>
+      <h1 class="title">nature-daily</h1>
+      <p class="subtitle">每天北京时间早上 6 点自动更新一篇 Nature 精选文章</p>
       <p class="meta-info" id="metaInfo">加载中...</p>
     </div>
   </header>
 
   <main class="main">
-    <div class="controls">
-      <div class="country-filters" id="countryFilters">
-        <button class="country-btn active" data-country="">全部</button>
-      </div>
-      <div class="search-box">
-        <input
-          type="text"
-          id="searchInput"
-          placeholder="搜索标题与摘要..."
-          autocomplete="off"
-        >
-      </div>
-    </div>
-
-    <div class="news-count" id="newsCount"></div>
-
-    <div class="news-grid" id="newsGrid">
-      <div class="loading">正在加载新闻数据...</div>
-    </div>
+    <section class="digest-card" id="digestCard">
+      <div class="loading">正在加载今日日报...</div>
+    </section>
   </main>
 
   <footer class="footer">
-    <p>数据来源：全球主流媒体公开 RSS Feed · 仅供信息参考</p>
+    <p>数据来源：Nature 公开页面与 RSS · 页面仅做个人学习与阅读索引</p>
   </footer>
 
   <script src="app.js"></script>

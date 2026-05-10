@@ -1,12 +1,12 @@
 {
-  "name": "global-news-monitor-worker",
+  "name": "nature-daily-worker",
   "version": "1.0.0",
   "private": true,
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "db:init": "wrangler d1 execute global-news-monitor-db --file=../db/schema.sql --remote",
-    "db:seed": "wrangler d1 execute global-news-monitor-db --command=\"INSERT OR REPLACE INTO media_sources SELECT * FROM json_each(readfile('../shared/media-sources.json'))\" --remote"
+    "db:init": "wrangler d1 execute nature-daily-db --file=../db/schema.sql --remote",
+    "db:seed": "wrangler d1 execute nature-daily-db --file=../db/seed.sql --remote"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20240405.0",

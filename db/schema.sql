@@ -41,6 +41,21 @@ CREATE TABLE IF NOT EXISTS ingest_runs (
   notes TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_articles_country_published ON articles(country, published_at DESC);
+CREATE TABLE IF NOT EXISTS daily_digest (
+  digest_date TEXT PRIMARY KEY,
+  article_id TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  section TEXT NOT NULL,
+  title_en TEXT NOT NULL,
+  title_zh TEXT NOT NULL,
+  summary_en TEXT NOT NULL,
+  summary_zh TEXT NOT NULL,
+  url TEXT NOT NULL,
+  image_url TEXT,
+  published_at TEXT,
+  selected_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_articles_source_published ON articles(source_id, published_at DESC);
 CREATE INDEX IF NOT EXISTS idx_articles_fetched ON articles(fetched_at DESC);
+CREATE INDEX IF NOT EXISTS idx_daily_digest_selected ON daily_digest(selected_at DESC);
