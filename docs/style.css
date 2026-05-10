@@ -196,6 +196,10 @@ body {
   padding: 12px 18px;
   text-decoration: none;
   font-weight: 600;
+  font-size: 0.95rem;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
   transition: transform 0.15s ease, opacity 0.15s ease;
 }
 
@@ -212,6 +216,21 @@ body {
 .action-secondary {
   background: #efe7da;
   color: var(--accent);
+}
+
+.action-refresh {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
+.action-refresh:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.action-refresh:not(:disabled):hover {
+  background: #c8e6c9;
 }
 
 .loading,

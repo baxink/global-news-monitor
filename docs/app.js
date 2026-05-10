@@ -63,10 +63,37 @@
 
         <div class="actions">
           <a class="action-link action-primary" href="${item.url}" target="_blank" rel="noopener noreferrer">阅读 Nature 原文</a>
+          <button class="action-link action-refresh" id="btnRefresh" type="button">🔄 换一篇</button>
           <a class="action-link action-secondary" href="https://www.nature.com" target="_blank" rel="noopener noreferrer">打开 Nature 首页</a>
         </div>
       </div>
     `;
+
+    const btn = document.getElementById('btnRefresh');
+    if (btn) {
+      btn.addEventListener('click', refreshDaily);
+    }
+  }
+
+  async function refreshDaily() {
+    const btn = document.getElementById('btnRefresh');
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = '⏳ 加载中...';
+    }
+
+    try {
+      const res = await fetch(`${API_BASE}/api/daily/refresh`, { method: 'POST' });
+      if (!res.ok) throw new Error('refresh error');
+      const data = await res.json();
+      renderDigest(data);
+    } catch {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = '🔄 换一篇';
+      }
+      alert('更换失败，请稍后再试');
+    }
   }
 
   async function fetchMeta() {

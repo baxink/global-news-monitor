@@ -219,12 +219,12 @@ async function upsertArticles(env: Env, articles: NormalizedArticle[]): Promise<
   await env.DB.batch(stmts);
 }
 
-async function selectDailyDigest(env: Env, sources: MediaSource[], articles: NormalizedArticle[], digestDate: string): Promise<DailyDigestRow | null> {
+async function selectDailyDigest(env: Env, sources: MediaSource[], articles: NormalizedArticle[], digestDate: string, excludeIds: Set<string> = new Set()): Promise<DailyDigestRow | null> {
   const orderedSources = getRotatingSource(sources, digestDate);
   const recentRows = await env.DB.prepare(
     'SELECT article_id FROM daily_digest ORDER BY digest_date DESC LIMIT 14'
   ).all<{ article_id: string }>();
-  const recentIds = new Set(recentRows.results.map(row => row.article_id));
+  const recentIds = new Set([...recentRows.results.map(row => row.article_id), ...excludeIds]);
 
   for (const source of orderedSources) {
     const candidates = articles
@@ -397,6 +397,60 @@ async function handleIngest(env: Env, request: Request): Promise<Response> {
   });
 }
 
+async function handleRefresh(env: Env, request: Request): Promise<Response> {
+  const today = toDigestDate();
+
+  const existingDigest = await env.DB.prepare(
+    'SELECT article_id FROM daily_digest WHERE digest_date = ? LIMIT 1'
+  ).bind(today).first<{ article_id: string }>();
+
+  const excludeIds = new Set<string>();
+  if (existingDigest) {
+    excludeIds.add(existingDigest.article_id);
+    await env.DB.prepare(
+      'DELETE FROM daily_digest WHERE digest_date = ?'
+    ).bind(today).run();
+  }
+
+  const sources = getEnabledSources();
+  const articles: NormalizedArticle[] = [];
+  for (const source of sources) {
+    try {
+      const sourceArticles = await fetchArticles(source);
+      if (sourceArticles.length > 0) {
+        articles.push(...sourceArticles);
+        await upsertArticles(env, sourceArticles);
+      }
+    } catch {}
+  }
+
+  const digest = await selectDailyDigest(env, sources, articles, today, excludeIds);
+
+  if (!digest) {
+    return new Response(JSON.stringify({ error: '无法选择新文章，请稍后再试' }), {
+      status: 404,
+      headers: {
+        'Content-Type': 'application/json',
+        ...corsHeaders(getRequestOrigin(request)),
+      },
+    });
+  }
+
+  const digestWithMedia = await env.DB.prepare(
+    `SELECT d.*, a.media_name
+     FROM daily_digest d
+     LEFT JOIN articles a ON a.id = d.article_id
+     WHERE d.digest_date = ? LIMIT 1`
+  ).bind(today).first<DailyDigestRow & { media_name?: string }>();
+
+  return new Response(JSON.stringify(mapDigestRow(digestWithMedia || digest)), {
+    headers: {
+      'Content-Type': 'application/json',
+      ...corsHeaders(getRequestOrigin(request)),
+    },
+  });
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -417,6 +471,10 @@ export default {
 
     if (url.pathname === '/api/ingest' && request.method === 'POST') {
       return handleIngest(env, request);
+    }
+
+    if (url.pathname === '/api/daily/refresh' && request.method === 'POST') {
+      return handleRefresh(env, request);
     }
 
     return new Response('Not Found', { status: 404 });
