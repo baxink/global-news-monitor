@@ -6,7 +6,7 @@ import { fetchHtml } from './fetchers/html';
 interface Env {
   DB: D1Database;
   FRONTEND_ORIGIN: string;
-  OPENAI_API_KEY?: string;
+  FREE_API_KEY?: string;
 }
 
 interface ArticleRow {
@@ -102,7 +102,7 @@ function stripMarkdownFence(text: string): string {
 }
 
 async function summarizeInChinese(env: Env, article: NormalizedArticle): Promise<{ titleZh: string; summaryZh: string }> {
-  if (!env.OPENAI_API_KEY) {
+  if (!env.FREE_API_KEY) {
     return {
       titleZh: article.title,
       summaryZh: article.summary || article.title,
@@ -118,15 +118,15 @@ async function summarizeInChinese(env: Env, article: NormalizedArticle): Promise
     `链接：${article.url}`,
   ].join('\n');
 
-  const res = await fetch('https://api.openai.com/v1/responses', {
+  const res = await fetch('https://api.chatanywhere.tech/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${env.OPENAI_API_KEY}`,
+      Authorization: `Bearer ${env.FREE_API_KEY}`,
     },
     body: JSON.stringify({
       model: 'gpt-4o-mini',
-      input: prompt,
+      messages: [{ role: 'user', content: prompt }],
     }),
   });
 
@@ -138,16 +138,12 @@ async function summarizeInChinese(env: Env, article: NormalizedArticle): Promise
   }
 
   const data = await res.json() as {
-    output_text?: string;
-    output?: Array<{
-      content?: Array<{
-        type?: string;
-        text?: string;
-      }>;
+    choices?: Array<{
+      message?: { content?: string };
     }>;
   };
 
-  const outputText = data.output_text || data.output?.flatMap(item => item.content || []).find(item => item.type === 'output_text')?.text || '';
+  const outputText = data.choices?.[0]?.message?.content || '';
   const text = stripMarkdownFence(outputText);
 
   try {

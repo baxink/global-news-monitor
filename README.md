@@ -38,13 +38,15 @@ npm run db:init
 npm run db:seed
 ```
 
-### 3. 配置 OpenAI Key
+### 3. 配置免费 API Key
 
-在 Worker 环境里添加 `OPENAI_API_KEY`，用于生成中文标题与摘要。
+在 Worker 环境里添加 `FREE_API_KEY`，用于生成中文标题与摘要。
+
+前往 [ChatAnywhere](https://api.chatanywhere.tech/v1/oauth/free/render) 用 GitHub 账号免费领取 API Key（gpt-4o-mini 200次/天，完全够用）。
 
 ```bash
 cd worker
-npx wrangler secret put OPENAI_API_KEY
+npx wrangler secret put FREE_API_KEY
 ```
 
 ### 4. 部署 Worker
