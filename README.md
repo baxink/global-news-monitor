@@ -66,6 +66,51 @@ npx wrangler deploy
 curl -X POST https://<your-worker>.workers.dev/api/ingest
 ```
 
+## 日常更新顺序
+
+当你修改来源配置、Worker 逻辑或数据库结构时，按这个顺序发布：
+
+1. 本地验证
+
+```bash
+cd worker
+npm test
+```
+
+2. 如果 `db/schema.sql` 有变更，先同步远端 schema
+
+```bash
+cd worker
+npm run db:init
+```
+
+3. 如果 `shared/media-sources.json` 或 `db/seed.sql` 有变更，重置远端来源配置
+
+```bash
+cd worker
+npm run db:seed
+```
+
+4. 部署 Worker
+
+```bash
+cd worker
+npx wrangler deploy
+```
+
+5. 手动补跑当天抓取
+
+```bash
+curl -X POST https://<your-worker>.workers.dev/api/ingest
+```
+
+6. 发布后检查
+
+```bash
+curl https://<your-worker>.workers.dev/api/meta
+curl https://<your-worker>.workers.dev/api/daily
+```
+
 ## API
 
 | 方法 | 路径 | 说明 |
