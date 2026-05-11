@@ -5,6 +5,7 @@ import { fetchHtml } from './fetchers/html';
 
 interface Env {
   DB: D1Database;
+  AI: Ai;
   FRONTEND_ORIGIN: string;
   FREE_API_KEY?: string;
 }
@@ -102,76 +103,47 @@ function stripMarkdownFence(text: string): string {
 }
 
 async function summarizeInChinese(env: Env, article: NormalizedArticle): Promise<{ titleZh: string; summaryZh: string }> {
-  if (!env.FREE_API_KEY) {
-    console.error('[summarize] FREE_API_KEY not set');
-    return {
-      titleZh: article.title,
-      summaryZh: article.summary || article.title,
-    };
-  }
+  const prompt = `请把下面这篇 Nature 文章信息整理成简体中文。
 
-  const prompt = [
-    '请把下面这篇 Nature 文章信息整理成简体中文。',
-    '要求：标题简洁准确；摘要 2-3 句，忠于原意，不要编造。',
-    '只返回 JSON，格式为 {"titleZh":"...","summaryZh":"..."}。',
-    `原标题：${article.title}`,
-    `英文摘要：${article.summary || article.title}`,
-    `链接：${article.url}`,
-  ].join('\n');
+要求：标题简洁准确；摘要 2-3 句，忠于原意，不要编造。
+只返回 JSON，格式为 {"titleZh":"...","summaryZh":"..."}。
+
+原标题：${article.title}
+英文摘要：${article.summary || article.title}`;
 
   try {
-    const res = await fetch('https://api.chatanywhere.org/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${env.FREE_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        messages: [{ role: 'user', content: prompt }],
-      }),
-    });
+    const result = await env.AI.run('@cf/meta/llama-3.1-8b-instruct', {
+      messages: [
+        { role: 'system', content: '你是一个科研文章翻译助手，把英文 Nature 文章信息整理成简体中文，只输出 JSON。' },
+        { role: 'user', content: prompt },
+      ],
+      max_tokens: 512,
+      temperature: 0.3,
+    }) as { response?: string };
 
-    if (!res.ok) {
-      const errText = await res.text().catch(() => '');
-      console.error(`[summarize] API error ${res.status}: ${errText.slice(0, 200)}`);
-      return {
-        titleZh: article.title,
-        summaryZh: article.summary || article.title,
-      };
-    }
-
-    const data = await res.json() as {
-      choices?: Array<{
-        message?: { content?: string };
-      }>;
-    };
-
-    const outputText = data.choices?.[0]?.message?.content || '';
-    console.log(`[summarize] raw output: ${outputText.slice(0, 100)}`);
+    const outputText = result.response || '';
+    console.log(`[summarize] raw: ${outputText.slice(0, 100)}`);
     const text = stripMarkdownFence(outputText);
 
     try {
       const parsed = JSON.parse(text) as { titleZh?: string; summaryZh?: string };
-      console.log(`[summarize] parsed: titleZh=${parsed.titleZh?.slice(0, 30)}, summaryZh=${parsed.summaryZh?.slice(0, 30)}`);
-      return {
-        titleZh: parsed.titleZh?.trim() || article.title,
-        summaryZh: parsed.summaryZh?.trim() || article.summary || article.title,
-      };
+      if (parsed.titleZh && parsed.summaryZh) {
+        return {
+          titleZh: parsed.titleZh.trim(),
+          summaryZh: parsed.summaryZh.trim(),
+        };
+      }
     } catch {
-      console.error(`[summarize] JSON parse failed for: ${text.slice(0, 200)}`);
-      return {
-        titleZh: article.title,
-        summaryZh: article.summary || article.title,
-      };
+      console.error(`[summarize] JSON parse failed: ${text.slice(0, 200)}`);
     }
   } catch (err) {
-    console.error(`[summarize] fetch failed: ${String(err)}`);
-    return {
-      titleZh: article.title,
-      summaryZh: article.summary || article.title,
-    };
+    console.error(`[summarize] AI error: ${String(err)}`);
   }
+
+  return {
+    titleZh: article.title,
+    summaryZh: article.summary || article.title,
+  };
 }
 
 function mapDigestRow(row: DailyDigestRow & { media_name?: string }): DigestPayload {
