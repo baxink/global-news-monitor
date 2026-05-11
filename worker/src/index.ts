@@ -35,6 +35,21 @@ interface DailyDigestCardRow {
   is_empty: number;
 }
 
+interface LegacyDailyDigestRow {
+  digest_date: string;
+  article_id: string;
+  source_id: string;
+  section: string;
+  title_en: string;
+  title_zh: string;
+  summary_en: string;
+  summary_zh: string;
+  url: string;
+  image_url: string | null;
+  published_at: string | null;
+  selected_at: string;
+}
+
 interface DailyDigestCardPayload {
   digestDate: string;
   sourceId: string;
@@ -260,6 +275,24 @@ function buildDigestPayload(sources: MediaSource[], rows: DailyDigestCardRow[], 
   };
 }
 
+function mapLegacyDigestRowToCard(row: LegacyDailyDigestRow): DailyDigestCardRow {
+  return {
+    digest_date: row.digest_date,
+    source_id: row.source_id,
+    section: row.section,
+    article_id: row.article_id,
+    title_en: row.title_en,
+    title_zh: row.title_zh,
+    summary_en: row.summary_en,
+    summary_zh: row.summary_zh,
+    url: row.url,
+    image_url: row.image_url,
+    published_at: row.published_at,
+    selected_at: row.selected_at,
+    is_empty: 0,
+  };
+}
+
 async function fetchArticles(source: MediaSource): Promise<NormalizedArticle[]> {
   const raw = source.parserType === 'html'
     ? await fetchHtml(source.feedUrl)
@@ -338,6 +371,12 @@ async function fetchDigestCard(env: Env, digestDate: string, sourceId: string): 
   return env.DB.prepare(
     'SELECT * FROM daily_digest_cards WHERE digest_date = ? AND source_id = ? LIMIT 1'
   ).bind(digestDate, sourceId).first<DailyDigestCardRow>();
+}
+
+async function fetchLegacyDigestByDate(env: Env, digestDate: string): Promise<LegacyDailyDigestRow | null> {
+  return env.DB.prepare(
+    'SELECT * FROM daily_digest WHERE digest_date = ? LIMIT 1'
+  ).bind(digestDate).first<LegacyDailyDigestRow>();
 }
 
 async function selectDigestCardForSource(
@@ -476,7 +515,12 @@ async function handleDaily(env: Env, request: Request): Promise<Response> {
   const rows = await fetchDigestCardsByDate(env, today);
 
   if (rows.length === 0) {
-    return jsonResponse(request, env, { error: 'Daily digest not ready' }, 404);
+    const legacyDigest = await fetchLegacyDigestByDate(env, today);
+    if (!legacyDigest) {
+      return jsonResponse(request, env, { error: 'Daily digest not ready' }, 404);
+    }
+
+    return jsonResponse(request, env, buildDigestPayload(sources, [mapLegacyDigestRowToCard(legacyDigest)], today));
   }
 
   return jsonResponse(request, env, buildDigestPayload(sources, rows, today));

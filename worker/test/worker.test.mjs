@@ -45,6 +45,7 @@ function createDbMock(state) {
   const queries = [];
   const getCardsForDate = (digestDate) => [...(state.dailyCardsByDate.get(digestDate)?.values() || [])];
   const getCard = (digestDate, sourceId) => state.dailyCardsByDate.get(digestDate)?.get(sourceId) || null;
+  const getLegacyDigest = (digestDate) => state.legacyDailyDigestByDate?.get(digestDate) || null;
   const setCard = (row) => {
     if (!state.dailyCardsByDate.has(row.digest_date)) {
       state.dailyCardsByDate.set(row.digest_date, new Map());
@@ -78,6 +79,14 @@ function createDbMock(state) {
           if (sql.includes('SELECT article_id FROM daily_digest_cards WHERE digest_date = ? AND source_id = ? LIMIT 1')) {
             const row = getCard(params[0], params[1]);
             return row ? { article_id: row.article_id } : null;
+          }
+
+          if (sql.includes('SELECT d.*, a.media_name') && sql.includes('FROM daily_digest d') && sql.includes('WHERE d.digest_date = ?')) {
+            return getLegacyDigest(params[0]);
+          }
+
+          if (sql.includes('SELECT * FROM daily_digest WHERE digest_date = ? LIMIT 1')) {
+            return getLegacyDigest(params[0]);
           }
 
           return null;
@@ -223,6 +232,51 @@ test('returns ordered daily cards and fills missing sources with empty placehold
   assert.equal(payload.cards[1].title, '现有标题');
   assert.equal(payload.cards[6].isEmpty, true);
   assert.equal(payload.cards[6].title, '');
+});
+
+test('falls back to the legacy single digest row when card rows are not ready yet', async () => {
+  const mod = await loadModule('../src/index.ts');
+  const today = new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const state = {
+    dailyCardsByDate: new Map(),
+    legacyDailyDigestByDate: new Map([
+      [today, {
+        digest_date: today,
+        article_id: 'art_legacy',
+        source_id: 'nature-news',
+        section: 'news',
+        title_en: 'Legacy title',
+        title_zh: '旧版标题',
+        summary_en: 'Legacy summary',
+        summary_zh: '旧版摘要',
+        url: 'https://www.nature.com/articles/legacy',
+        image_url: '',
+        published_at: '2026-05-11T00:00:00.000Z',
+        selected_at: '2026-05-11T00:00:00.000Z',
+      }],
+    ]),
+    recentArticleIdsBySource: new Map(),
+    mediaNameBySource: new Map([
+      ['nature-news', 'Nature'],
+    ]),
+  };
+  const db = createDbMock(state);
+  const env = {
+    DB: db,
+    AI: { run() { throw new Error('AI should not be used for reads'); } },
+    FRONTEND_ORIGIN: 'https://baxink.github.io',
+  };
+
+  const response = await mod.default.fetch(new Request('https://example.com/api/daily'), env);
+  assert.equal(response.status, 200);
+
+  const payload = await response.json();
+  assert.equal(payload.cards.length, 7);
+  const legacyCard = payload.cards.find(card => card.sourceId === 'nature-news');
+  assert.ok(legacyCard);
+  assert.equal(legacyCard.isEmpty, false);
+  assert.equal(legacyCard.title, '旧版标题');
+  assert.equal(legacyCard.url, 'https://www.nature.com/articles/legacy');
 });
 
 test('rejects refresh requests without a sourceId', async () => {

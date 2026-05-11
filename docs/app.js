@@ -5,6 +5,15 @@
   const digestGrid = document.getElementById('digestGrid');
   const metaInfo = document.getElementById('metaInfo');
   let currentDigest = null;
+  const SOURCE_SPECS = [
+    { sourceId: 'nature-main-rss', section: 'Main', mediaName: 'Nature' },
+    { sourceId: 'nature-news', section: 'News', mediaName: 'Nature' },
+    { sourceId: 'nature-opinion', section: 'Opinion', mediaName: 'Nature' },
+    { sourceId: 'nature-research-analysis', section: 'Research Analysis', mediaName: 'Nature' },
+    { sourceId: 'nature-research-articles', section: 'Research Articles', mediaName: 'Nature' },
+    { sourceId: 'nature-careers', section: 'Careers', mediaName: 'Nature Careers' },
+    { sourceId: 'nature-reviews-bioengineering', section: 'Bioengineering', mediaName: 'Nature Reviews Bioengineering' },
+  ];
 
   function escapeHtml(str) {
     const div = document.createElement('div');
@@ -22,6 +31,60 @@
       day: 'numeric',
       timeZone: 'Asia/Shanghai',
     }).format(date);
+  }
+
+  function buildEmptyCard(spec, digestDate) {
+    return {
+      digestDate: digestDate || '',
+      sourceId: spec.sourceId,
+      section: spec.section,
+      sectionKey: spec.section.toLowerCase().replace(/\s+/g, '-'),
+      mediaName: spec.mediaName,
+      title: '',
+      titleEn: '',
+      summary: '',
+      summaryEn: '',
+      url: '',
+      imageUrl: '',
+      publishedAt: null,
+      selectedAt: '',
+      isEmpty: true,
+    };
+  }
+
+  function normalizeDigestPayload(payload) {
+    if (payload && Array.isArray(payload.cards)) {
+      return payload;
+    }
+
+    if (!payload || typeof payload !== 'object' || !payload.sourceId) {
+      return null;
+    }
+
+    const digestDate = payload.digestDate || '';
+    const rowBySourceId = new Map([
+      [payload.sourceId, {
+        digestDate,
+        sourceId: payload.sourceId,
+        section: payload.section || 'Unknown',
+        sectionKey: payload.sourceId,
+        mediaName: payload.mediaName || 'Nature',
+        title: payload.title || '',
+        titleEn: payload.titleEn || '',
+        summary: payload.summary || '',
+        summaryEn: payload.summaryEn || '',
+        url: payload.url || '',
+        imageUrl: payload.imageUrl || '',
+        publishedAt: payload.publishedAt || null,
+        selectedAt: payload.selectedAt || '',
+        isEmpty: false,
+      }],
+    ]);
+
+    return {
+      digestDate,
+      cards: SOURCE_SPECS.map(spec => rowBySourceId.get(spec.sourceId) || buildEmptyCard(spec, digestDate)),
+    };
   }
 
   function renderCard(item) {
@@ -83,14 +146,15 @@
   }
 
   function renderDigest(payload) {
-    currentDigest = payload;
+    const normalized = normalizeDigestPayload(payload);
+    currentDigest = normalized;
 
-    if (!payload || !Array.isArray(payload.cards) || payload.cards.length === 0) {
+    if (!normalized || !Array.isArray(normalized.cards) || normalized.cards.length === 0) {
       digestGrid.innerHTML = '<div class="empty">今日日报暂未生成，请稍后再试。</div>';
       return;
     }
 
-    digestGrid.innerHTML = payload.cards.map(renderCard).join('');
+    digestGrid.innerHTML = normalized.cards.map(renderCard).join('');
   }
 
   async function refreshCard(sourceId, button) {
@@ -108,6 +172,11 @@
       if (!res.ok) throw new Error('refresh error');
 
       const card = await res.json();
+      if (!card || !card.sourceId) {
+        await fetchDaily();
+        return;
+      }
+
       if (currentDigest && Array.isArray(currentDigest.cards)) {
         currentDigest = {
           ...currentDigest,
