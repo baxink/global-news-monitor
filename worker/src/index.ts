@@ -73,7 +73,6 @@ interface DailyDigestPayload {
 }
 
 const DEFAULT_FRONTEND_ORIGIN = 'https://baxink.github.io';
-let dailyDigestCardSchemaPromise: Promise<void> | null = null;
 
 function getConfiguredFrontendOrigin(env: Env): string {
   return env.FRONTEND_ORIGIN || DEFAULT_FRONTEND_ORIGIN;
@@ -146,40 +145,6 @@ function normalizeSectionLabel(section: string): string {
 
 function stripMarkdownFence(text: string): string {
   return text.replace(/^```json\s*/i, '').replace(/```$/i, '').trim();
-}
-
-async function ensureDailyDigestCardSchema(env: Env): Promise<void> {
-  if (!dailyDigestCardSchemaPromise) {
-    dailyDigestCardSchemaPromise = (async () => {
-      await env.DB.prepare(
-        `CREATE TABLE IF NOT EXISTS daily_digest_cards (
-          digest_date TEXT NOT NULL,
-          source_id TEXT NOT NULL,
-          section TEXT NOT NULL,
-          article_id TEXT,
-          title_en TEXT,
-          title_zh TEXT,
-          summary_en TEXT,
-          summary_zh TEXT,
-          url TEXT,
-          image_url TEXT,
-          published_at TEXT,
-          selected_at TEXT NOT NULL,
-          is_empty INTEGER NOT NULL DEFAULT 0,
-          PRIMARY KEY (digest_date, source_id)
-        )`
-      ).run();
-
-      await env.DB.prepare(
-        'CREATE INDEX IF NOT EXISTS idx_daily_digest_cards_selected ON daily_digest_cards(selected_at DESC)'
-      ).run();
-    })().catch(error => {
-      dailyDigestCardSchemaPromise = null;
-      throw error;
-    });
-  }
-
-  await dailyDigestCardSchemaPromise;
 }
 
 async function summarizeInChinese(env: Env, article: NormalizedArticle): Promise<{ titleZh: string; summaryZh: string }> {
@@ -447,8 +412,6 @@ async function ensureDailyDigestCards(
 }
 
 async function runIngest(env: Env): Promise<{ runId: string; status: string; successCount: number; failureCount: number; totalSources: number; digestDate: string; digestCreated: boolean; errors?: string[] }> {
-  await ensureDailyDigestCardSchema(env);
-
   const runId = `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const startedAt = new Date().toISOString();
 
@@ -508,8 +471,6 @@ async function runIngest(env: Env): Promise<{ runId: string; status: string; suc
 }
 
 async function handleDaily(env: Env, request: Request): Promise<Response> {
-  await ensureDailyDigestCardSchema(env);
-
   const today = toDigestDate();
   const sources = getOrderedSources();
   const rows = await fetchDigestCardsByDate(env, today);
@@ -527,8 +488,6 @@ async function handleDaily(env: Env, request: Request): Promise<Response> {
 }
 
 async function handleMeta(env: Env, request: Request): Promise<Response> {
-  await ensureDailyDigestCardSchema(env);
-
   const sourceCount = await env.DB.prepare(
     'SELECT COUNT(*) as count FROM media_sources WHERE enabled = 1'
   ).first<{ count: number }>();
@@ -570,8 +529,6 @@ async function parseRefreshRequest(request: Request): Promise<{ sourceId: string
 }
 
 async function handleRefresh(env: Env, request: Request): Promise<Response> {
-  await ensureDailyDigestCardSchema(env);
-
   const payload = await parseRefreshRequest(request);
   if (!payload) {
     return jsonResponse(request, env, { error: 'sourceId is required' }, 400);
