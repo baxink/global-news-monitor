@@ -7,6 +7,10 @@
     "dev:worker": "cd worker && npm run dev",
     "deploy:worker": "cd worker && npm run deploy",
     "db:init": "cd worker && npm run db:init",
-    "db:seed": "cd worker && npm run db:seed"
+    "db:seed": "cd worker && npm run db:seed",
+    "test:docs": "node --test docs/app.test.mjs"
+  },
+  "devDependencies": {
+    "jsdom": "^26.1.0"
   }
 }
