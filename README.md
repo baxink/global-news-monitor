@@ -6,10 +6,10 @@
 
 ## 功能
 
-- 抓取 Nature 6 个版面（news / opinion / research / careers / main RSS 等）
-- 每天按版面轮换，选出一篇推荐
+- 抓取 Nature 7 个版面（main / news / opinion / research-analysis / research-articles / careers / Nature Reviews Bioengineering）
+- 每天每个版面各精选 1 篇，组成 7 卡日报
 - **Cloudflare Workers AI 免费内置模型** 生成中文标题与摘要
-- 前端 **换一篇** 按钮，手动刷新当日推荐
+- 前端每张卡片都有 **换一篇** 按钮，单独刷新当前版面
 - GitHub Pages 静态页面实时读取
 
 ## 技术栈
@@ -68,7 +68,7 @@ curl -X POST https://<your-worker>.workers.dev/api/ingest
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/api/daily` | 获取当日日报 |
-| POST | `/api/daily/refresh` | **换一篇**：重新选文并翻译 |
+| GET | `/api/daily` | 获取当日 7 卡日报 |
+| POST | `/api/daily/refresh` | **换一篇**：按 `sourceId` 单独刷新一个版面 |
 | GET | `/api/meta` | 数据库统计信息 |
 | POST | `/api/ingest` | 手动触发抓取与选文 |

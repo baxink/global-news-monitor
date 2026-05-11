@@ -82,5 +82,19 @@
     "articleLimit": 18,
     "enabled": true,
     "priority": 6
+  },
+  {
+    "id": "nature-reviews-bioengineering",
+    "country": "英国",
+    "countryCode": "GB",
+    "mediaName": "Nature Reviews Bioengineering",
+    "language": "en",
+    "homepageUrl": "https://www.nature.com/natrevbioeng",
+    "feedUrl": "https://www.nature.com/natrevbioeng.rss",
+    "section": "bioengineering",
+    "parserType": "rss",
+    "articleLimit": 24,
+    "enabled": true,
+    "priority": 7
   }
 ]

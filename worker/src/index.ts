@@ -1,4 +1,4 @@
-import { getEnabledSources, type MediaSource } from './sources';
+import { getEnabledSources, getSourceById, type MediaSource } from './sources';
 import { normalizeArticles, type NormalizedArticle } from './normalize';
 import { fetchRss } from './fetchers/rss';
 import { fetchHtml } from './fetchers/html';
@@ -10,20 +10,6 @@ interface Env {
   FREE_API_KEY?: string;
 }
 
-interface ArticleRow {
-  id: string;
-  source_id: string;
-  country: string;
-  media_name: string;
-  title: string;
-  summary: string;
-  url: string;
-  image_url: string;
-  published_at: string;
-  fetched_at: string;
-  lang: string;
-}
-
 interface IngestRow {
   id: string;
   started_at: string;
@@ -33,40 +19,53 @@ interface IngestRow {
   failure_count: number;
 }
 
-interface DailyDigestRow {
+interface DailyDigestCardRow {
   digest_date: string;
-  article_id: string;
   source_id: string;
   section: string;
-  title_en: string;
-  title_zh: string;
-  summary_en: string;
-  summary_zh: string;
-  url: string;
-  image_url: string;
-  published_at: string;
+  article_id: string | null;
+  title_en: string | null;
+  title_zh: string | null;
+  summary_en: string | null;
+  summary_zh: string | null;
+  url: string | null;
+  image_url: string | null;
+  published_at: string | null;
   selected_at: string;
+  is_empty: number;
 }
 
-interface DigestPayload {
+interface DailyDigestCardPayload {
   digestDate: string;
+  sourceId: string;
   section: string;
+  sectionKey: string;
+  mediaName: string;
   title: string;
   titleEn: string;
   summary: string;
   summaryEn: string;
   url: string;
   imageUrl: string;
-  publishedAt: string;
+  publishedAt: string | null;
   selectedAt: string;
-  sourceId: string;
-  mediaName: string;
+  isEmpty: boolean;
+}
+
+interface DailyDigestPayload {
+  digestDate: string;
+  cards: DailyDigestCardPayload[];
 }
 
 const DEFAULT_FRONTEND_ORIGIN = 'https://baxink.github.io';
+let dailyDigestCardSchemaPromise: Promise<void> | null = null;
 
 function getConfiguredFrontendOrigin(env: Env): string {
   return env.FRONTEND_ORIGIN || DEFAULT_FRONTEND_ORIGIN;
+}
+
+function getOrderedSources(): MediaSource[] {
+  return [...getEnabledSources()].sort((a, b) => a.priority - b.priority);
 }
 
 function isAllowedOrigin(origin: string, allowedOrigin: string): boolean {
@@ -104,9 +103,9 @@ function corsHeaders(origin: string | null): Record<string, string> {
   return headers;
 }
 
-function forbiddenResponse(request: Request, env: Env): Response {
-  return new Response(JSON.stringify({ error: 'Forbidden origin' }), {
-    status: 403,
+function jsonResponse(request: Request, env: Env, body: unknown, status: number = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
     headers: {
       'Content-Type': 'application/json',
       ...corsHeaders(getCorsOrigin(request, env)),
@@ -114,16 +113,13 @@ function forbiddenResponse(request: Request, env: Env): Response {
   });
 }
 
+function forbiddenResponse(request: Request, env: Env): Response {
+  return jsonResponse(request, env, { error: 'Forbidden origin' }, 403);
+}
+
 function toDigestDate(date: Date = new Date()): string {
   const offsetMs = 8 * 60 * 60 * 1000;
   return new Date(date.getTime() + offsetMs).toISOString().slice(0, 10);
-}
-
-function getRotatingSource(sources: MediaSource[], digestDate: string): MediaSource[] {
-  if (sources.length === 0) return [];
-  const anchor = new Date(`${digestDate}T00:00:00+08:00`).getTime();
-  const index = Math.floor(anchor / 86400000) % sources.length;
-  return [...sources.slice(index), ...sources.slice(0, index)];
 }
 
 function normalizeSectionLabel(section: string): string {
@@ -135,6 +131,40 @@ function normalizeSectionLabel(section: string): string {
 
 function stripMarkdownFence(text: string): string {
   return text.replace(/^```json\s*/i, '').replace(/```$/i, '').trim();
+}
+
+async function ensureDailyDigestCardSchema(env: Env): Promise<void> {
+  if (!dailyDigestCardSchemaPromise) {
+    dailyDigestCardSchemaPromise = (async () => {
+      await env.DB.prepare(
+        `CREATE TABLE IF NOT EXISTS daily_digest_cards (
+          digest_date TEXT NOT NULL,
+          source_id TEXT NOT NULL,
+          section TEXT NOT NULL,
+          article_id TEXT,
+          title_en TEXT,
+          title_zh TEXT,
+          summary_en TEXT,
+          summary_zh TEXT,
+          url TEXT,
+          image_url TEXT,
+          published_at TEXT,
+          selected_at TEXT NOT NULL,
+          is_empty INTEGER NOT NULL DEFAULT 0,
+          PRIMARY KEY (digest_date, source_id)
+        )`
+      ).run();
+
+      await env.DB.prepare(
+        'CREATE INDEX IF NOT EXISTS idx_daily_digest_cards_selected ON daily_digest_cards(selected_at DESC)'
+      ).run();
+    })().catch(error => {
+      dailyDigestCardSchemaPromise = null;
+      throw error;
+    });
+  }
+
+  await dailyDigestCardSchemaPromise;
 }
 
 async function summarizeInChinese(env: Env, article: NormalizedArticle): Promise<{ titleZh: string; summaryZh: string }> {
@@ -181,20 +211,52 @@ async function summarizeInChinese(env: Env, article: NormalizedArticle): Promise
   };
 }
 
-function mapDigestRow(row: DailyDigestRow & { media_name?: string }): DigestPayload {
+function buildEmptyCardRow(source: MediaSource, digestDate: string, selectedAt: string = new Date().toISOString()): DailyDigestCardRow {
+  return {
+    digest_date: digestDate,
+    source_id: source.id,
+    section: source.section,
+    article_id: null,
+    title_en: null,
+    title_zh: null,
+    summary_en: null,
+    summary_zh: null,
+    url: null,
+    image_url: null,
+    published_at: null,
+    selected_at: selectedAt,
+    is_empty: 1,
+  };
+}
+
+function mapDigestCardRow(source: MediaSource, row: DailyDigestCardRow): DailyDigestCardPayload {
   return {
     digestDate: row.digest_date,
-    section: normalizeSectionLabel(row.section),
-    title: row.title_zh,
-    titleEn: row.title_en,
-    summary: row.summary_zh,
-    summaryEn: row.summary_en,
-    url: row.url,
-    imageUrl: row.image_url,
+    sourceId: source.id,
+    section: normalizeSectionLabel(source.section),
+    sectionKey: source.section,
+    mediaName: source.mediaName,
+    title: row.title_zh || '',
+    titleEn: row.title_en || '',
+    summary: row.summary_zh || '',
+    summaryEn: row.summary_en || '',
+    url: row.url || '',
+    imageUrl: row.image_url || '',
     publishedAt: row.published_at,
     selectedAt: row.selected_at,
-    sourceId: row.source_id,
-    mediaName: row.media_name || 'Nature',
+    isEmpty: row.is_empty === 1,
+  };
+}
+
+function buildDigestPayload(sources: MediaSource[], rows: DailyDigestCardRow[], digestDate: string): DailyDigestPayload {
+  const rowBySourceId = new Map(rows.map(row => [row.source_id, row]));
+
+  return {
+    digestDate,
+    cards: sources.map(source => mapDigestCardRow(
+      source,
+      rowBySourceId.get(source.id) || buildEmptyCardRow(source, digestDate)
+    )),
   };
 }
 
@@ -240,53 +302,114 @@ async function upsertArticles(env: Env, articles: NormalizedArticle[]): Promise<
   await env.DB.batch(stmts);
 }
 
-async function selectDailyDigest(env: Env, sources: MediaSource[], articles: NormalizedArticle[], digestDate: string, excludeIds: Set<string> = new Set()): Promise<DailyDigestRow | null> {
-  const orderedSources = getRotatingSource(sources, digestDate);
+async function upsertDigestCard(env: Env, row: DailyDigestCardRow): Promise<DailyDigestCardRow> {
+  await env.DB.prepare(
+    `INSERT OR REPLACE INTO daily_digest_cards (
+      digest_date, source_id, section, article_id, title_en, title_zh, summary_en, summary_zh, url, image_url, published_at, selected_at, is_empty
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(
+    row.digest_date,
+    row.source_id,
+    row.section,
+    row.article_id,
+    row.title_en,
+    row.title_zh,
+    row.summary_en,
+    row.summary_zh,
+    row.url,
+    row.image_url,
+    row.published_at,
+    row.selected_at,
+    row.is_empty
+  ).run();
+
+  return row;
+}
+
+async function fetchDigestCardsByDate(env: Env, digestDate: string): Promise<DailyDigestCardRow[]> {
+  const rows = await env.DB.prepare(
+    'SELECT * FROM daily_digest_cards WHERE digest_date = ?'
+  ).bind(digestDate).all<DailyDigestCardRow>();
+
+  return rows.results || [];
+}
+
+async function fetchDigestCard(env: Env, digestDate: string, sourceId: string): Promise<DailyDigestCardRow | null> {
+  return env.DB.prepare(
+    'SELECT * FROM daily_digest_cards WHERE digest_date = ? AND source_id = ? LIMIT 1'
+  ).bind(digestDate, sourceId).first<DailyDigestCardRow>();
+}
+
+async function selectDigestCardForSource(
+  env: Env,
+  source: MediaSource,
+  articles: NormalizedArticle[],
+  digestDate: string,
+  excludeIds: Set<string> = new Set()
+): Promise<DailyDigestCardRow> {
   const recentRows = await env.DB.prepare(
-    'SELECT article_id FROM daily_digest ORDER BY digest_date DESC LIMIT 14'
-  ).all<{ article_id: string }>();
-  const recentIds = new Set([...recentRows.results.map(row => row.article_id), ...excludeIds]);
+    'SELECT article_id FROM daily_digest_cards WHERE source_id = ? AND is_empty = 0 ORDER BY digest_date DESC LIMIT 14'
+  ).bind(source.id).all<{ article_id: string | null }>();
 
-  for (const source of orderedSources) {
-    const candidates = articles
-      .filter(article => article.sourceId === source.id)
-      .sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt));
+  const recentIds = new Set(
+    [...recentRows.results.map(row => row.article_id).filter((id): id is string => Boolean(id)), ...excludeIds]
+  );
 
-    const selected = candidates.find(article => !recentIds.has(article.id)) || candidates[0];
-    if (!selected) continue;
+  const candidates = [...articles].sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt));
+  const selected = candidates.find(article => !recentIds.has(article.id)) || candidates[0];
 
-    const localized = await summarizeInChinese(env, selected);
-
-    await env.DB.prepare(
-      `INSERT OR REPLACE INTO daily_digest (
-        digest_date, article_id, source_id, section, title_en, title_zh, summary_en, summary_zh, url, image_url, published_at, selected_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).bind(
-      digestDate,
-      selected.id,
-      source.id,
-      source.section,
-      selected.title,
-      localized.titleZh,
-      selected.summary,
-      localized.summaryZh,
-      selected.url,
-      selected.imageUrl,
-      selected.publishedAt,
-      new Date().toISOString()
-    ).run();
-
-    const digest = await env.DB.prepare(
-      'SELECT * FROM daily_digest WHERE digest_date = ? LIMIT 1'
-    ).bind(digestDate).first<DailyDigestRow>();
-
-    return digest || null;
+  if (!selected) {
+    return upsertDigestCard(env, buildEmptyCardRow(source, digestDate));
   }
 
-  return null;
+  const localized = await summarizeInChinese(env, selected);
+
+  return upsertDigestCard(env, {
+    digest_date: digestDate,
+    source_id: source.id,
+    section: source.section,
+    article_id: selected.id,
+    title_en: selected.title,
+    title_zh: localized.titleZh,
+    summary_en: selected.summary || null,
+    summary_zh: localized.summaryZh,
+    url: selected.url,
+    image_url: selected.imageUrl || null,
+    published_at: selected.publishedAt,
+    selected_at: new Date().toISOString(),
+    is_empty: 0,
+  });
+}
+
+async function ensureDailyDigestCards(
+  env: Env,
+  sources: MediaSource[],
+  articlesBySource: Map<string, NormalizedArticle[]>,
+  digestDate: string
+): Promise<DailyDigestCardRow[]> {
+  const existingRows = await fetchDigestCardsByDate(env, digestDate);
+  const rowBySourceId = new Map(existingRows.map(row => [row.source_id, row]));
+
+  for (const source of sources) {
+    if (rowBySourceId.has(source.id)) continue;
+
+    const row = await selectDigestCardForSource(
+      env,
+      source,
+      articlesBySource.get(source.id) || [],
+      digestDate
+    );
+    rowBySourceId.set(source.id, row);
+  }
+
+  return sources
+    .map(source => rowBySourceId.get(source.id))
+    .filter((row): row is DailyDigestCardRow => Boolean(row));
 }
 
 async function runIngest(env: Env): Promise<{ runId: string; status: string; successCount: number; failureCount: number; totalSources: number; digestDate: string; digestCreated: boolean; errors?: string[] }> {
+  await ensureDailyDigestCardSchema(env);
+
   const runId = `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const startedAt = new Date().toISOString();
 
@@ -294,8 +417,8 @@ async function runIngest(env: Env): Promise<{ runId: string; status: string; suc
     'INSERT INTO ingest_runs (id, started_at, status) VALUES (?, ?, ?)'
   ).bind(runId, startedAt, 'running').run();
 
-  const sources = getEnabledSources();
-  const articles: NormalizedArticle[] = [];
+  const sources = getOrderedSources();
+  const articlesBySource = new Map<string, NormalizedArticle[]>();
   let successCount = 0;
   let failureCount = 0;
   const errors: string[] = [];
@@ -303,26 +426,25 @@ async function runIngest(env: Env): Promise<{ runId: string; status: string; suc
   for (const source of sources) {
     try {
       const sourceArticles = await fetchArticles(source);
+      articlesBySource.set(source.id, sourceArticles);
+
       if (sourceArticles.length === 0) {
         failureCount++;
         errors.push(`${source.id}: no articles`);
         continue;
       }
-      articles.push(...sourceArticles);
+
       await upsertArticles(env, sourceArticles);
       successCount++;
     } catch (error) {
       failureCount++;
       errors.push(`${source.id}: ${String(error)}`);
+      articlesBySource.set(source.id, []);
     }
   }
 
   const digestDate = toDigestDate();
-  const existingDigest = await env.DB.prepare(
-    'SELECT * FROM daily_digest WHERE digest_date = ? LIMIT 1'
-  ).bind(digestDate).first<DailyDigestRow>();
-
-  const digest = existingDigest || await selectDailyDigest(env, sources, articles, digestDate);
+  const cards = await ensureDailyDigestCards(env, sources, articlesBySource, digestDate);
   const status = successCount > 0 ? 'success' : 'failed';
   const finishedAt = new Date().toISOString();
 
@@ -341,40 +463,28 @@ async function runIngest(env: Env): Promise<{ runId: string; status: string; suc
     failureCount,
     totalSources: sources.length,
     digestDate,
-    digestCreated: Boolean(digest),
+    digestCreated: cards.length > 0,
     errors: errors.length > 0 ? errors : undefined,
   };
 }
 
 async function handleDaily(env: Env, request: Request): Promise<Response> {
-  const today = toDigestDate();
-  const digest = await env.DB.prepare(
-    `SELECT d.*, a.media_name
-     FROM daily_digest d
-     LEFT JOIN articles a ON a.id = d.article_id
-     WHERE d.digest_date = ?
-     LIMIT 1`
-  ).bind(today).first<DailyDigestRow & { media_name?: string }>();
+  await ensureDailyDigestCardSchema(env);
 
-  if (!digest) {
-    return new Response(JSON.stringify({ error: 'Daily digest not ready' }), {
-      status: 404,
-      headers: {
-        'Content-Type': 'application/json',
-        ...corsHeaders(getCorsOrigin(request, env)),
-      },
-    });
+  const today = toDigestDate();
+  const sources = getOrderedSources();
+  const rows = await fetchDigestCardsByDate(env, today);
+
+  if (rows.length === 0) {
+    return jsonResponse(request, env, { error: 'Daily digest not ready' }, 404);
   }
 
-  return new Response(JSON.stringify(mapDigestRow(digest)), {
-    headers: {
-      'Content-Type': 'application/json',
-      ...corsHeaders(getCorsOrigin(request, env)),
-    },
-  });
+  return jsonResponse(request, env, buildDigestPayload(sources, rows, today));
 }
 
 async function handleMeta(env: Env, request: Request): Promise<Response> {
+  await ensureDailyDigestCardSchema(env);
+
   const sourceCount = await env.DB.prepare(
     'SELECT COUNT(*) as count FROM media_sources WHERE enabled = 1'
   ).first<{ count: number }>();
@@ -388,85 +498,69 @@ async function handleMeta(env: Env, request: Request): Promise<Response> {
   ).first<{ count: number }>();
 
   const digestCount = await env.DB.prepare(
-    'SELECT COUNT(*) as count FROM daily_digest'
+    'SELECT COUNT(DISTINCT digest_date) as count FROM daily_digest_cards'
   ).first<{ count: number }>();
 
-  return new Response(
-    JSON.stringify({
-      sourceCount: sourceCount?.count || 0,
-      articleCount: articleCount?.count || 0,
-      digestCount: digestCount?.count || 0,
-      lastUpdate: lastRun?.finished_at || lastRun?.started_at || null,
-      lastRunStatus: lastRun?.status || null,
-    }),
-    {
-      headers: {
-        'Content-Type': 'application/json',
-        ...corsHeaders(getCorsOrigin(request, env)),
-      },
-    }
-  );
+  return jsonResponse(request, env, {
+    sourceCount: sourceCount?.count || 0,
+    articleCount: articleCount?.count || 0,
+    digestCount: digestCount?.count || 0,
+    lastUpdate: lastRun?.finished_at || lastRun?.started_at || null,
+    lastRunStatus: lastRun?.status || null,
+  });
 }
 
 async function handleIngest(env: Env, request: Request): Promise<Response> {
   const result = await runIngest(env);
-  return new Response(JSON.stringify(result), {
-    headers: {
-      'Content-Type': 'application/json',
-      ...corsHeaders(getCorsOrigin(request, env)),
-    },
-  });
+  return jsonResponse(request, env, result);
+}
+
+async function parseRefreshRequest(request: Request): Promise<{ sourceId: string } | null> {
+  try {
+    const body = await request.json() as { sourceId?: string };
+    if (!body?.sourceId || typeof body.sourceId !== 'string') return null;
+    return { sourceId: body.sourceId };
+  } catch {
+    return null;
+  }
 }
 
 async function handleRefresh(env: Env, request: Request): Promise<Response> {
+  await ensureDailyDigestCardSchema(env);
+
+  const payload = await parseRefreshRequest(request);
+  if (!payload) {
+    return jsonResponse(request, env, { error: 'sourceId is required' }, 400);
+  }
+
+  const source = getSourceById(payload.sourceId);
+  if (!source || !source.enabled) {
+    return jsonResponse(request, env, { error: 'Unknown sourceId' }, 404);
+  }
+
   const today = toDigestDate();
-
-  const existingDigest = await env.DB.prepare(
-    'SELECT article_id FROM daily_digest WHERE digest_date = ? LIMIT 1'
-  ).bind(today).first<{ article_id: string }>();
-
+  const existingCard = await fetchDigestCard(env, today, source.id);
   const excludeIds = new Set<string>();
-  if (existingDigest) {
-    excludeIds.add(existingDigest.article_id);
+  if (existingCard?.article_id) {
+    excludeIds.add(existingCard.article_id);
   }
 
-  const sources = getEnabledSources();
-  const articles: NormalizedArticle[] = [];
-  for (const source of sources) {
-    try {
-      const sourceArticles = await fetchArticles(source);
-      if (sourceArticles.length > 0) {
-        articles.push(...sourceArticles);
-        await upsertArticles(env, sourceArticles);
-      }
-    } catch {}
+  let sourceArticles: NormalizedArticle[] = [];
+  try {
+    sourceArticles = await fetchArticles(source);
+    await upsertArticles(env, sourceArticles);
+  } catch (error) {
+    console.error(`[refresh] ${source.id}: ${String(error)}`);
   }
 
-  const digest = await selectDailyDigest(env, sources, articles, today, excludeIds);
-
-  if (!digest) {
-    return new Response(JSON.stringify({ error: '无法选择新文章，请稍后再试' }), {
-      status: 404,
-      headers: {
-        'Content-Type': 'application/json',
-        ...corsHeaders(getCorsOrigin(request, env)),
-      },
-    });
+  let card: DailyDigestCardRow;
+  if (sourceArticles.length === 0 && existingCard && existingCard.is_empty === 0) {
+    card = existingCard;
+  } else {
+    card = await selectDigestCardForSource(env, source, sourceArticles, today, excludeIds);
   }
 
-  const digestWithMedia = await env.DB.prepare(
-    `SELECT d.*, a.media_name
-     FROM daily_digest d
-     LEFT JOIN articles a ON a.id = d.article_id
-     WHERE d.digest_date = ? LIMIT 1`
-  ).bind(today).first<DailyDigestRow & { media_name?: string }>();
-
-  return new Response(JSON.stringify(mapDigestRow(digestWithMedia || digest)), {
-    headers: {
-      'Content-Type': 'application/json',
-      ...corsHeaders(getCorsOrigin(request, env)),
-    },
-  });
+  return jsonResponse(request, env, mapDigestCardRow(source, card));
 }
 
 export default {

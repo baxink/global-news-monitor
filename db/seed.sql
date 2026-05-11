@@ -18,4 +18,5 @@ INSERT INTO media_sources (
   ('nature-opinion', '英国', 'GB', 'Nature', 'en', 'https://www.nature.com/opinion', 'https://www.nature.com/opinion', 'opinion', 'html', 18, 1, 3),
   ('nature-research-analysis', '英国', 'GB', 'Nature', 'en', 'https://www.nature.com/research-analysis', 'https://www.nature.com/research-analysis', 'research-analysis', 'html', 18, 1, 4),
   ('nature-research-articles', '英国', 'GB', 'Nature', 'en', 'https://www.nature.com/nature/research-articles', 'https://www.nature.com/nature/research-articles', 'research-articles', 'html', 18, 1, 5),
-  ('nature-careers', '英国', 'GB', 'Nature Careers', 'en', 'https://www.nature.com/careers', 'https://www.nature.com/careers', 'careers', 'html', 18, 1, 6);
+  ('nature-careers', '英国', 'GB', 'Nature Careers', 'en', 'https://www.nature.com/careers', 'https://www.nature.com/careers', 'careers', 'html', 18, 1, 6),
+  ('nature-reviews-bioengineering', '英国', 'GB', 'Nature Reviews Bioengineering', 'en', 'https://www.nature.com/natrevbioeng', 'https://www.nature.com/natrevbioeng.rss', 'bioengineering', 'rss', 24, 1, 7);

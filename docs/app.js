@@ -2,8 +2,9 @@
   'use strict';
 
   const API_BASE = 'https://nature-daily.fanxj137616.workers.dev';
-  const digestCard = document.getElementById('digestCard');
+  const digestGrid = document.getElementById('digestGrid');
   const metaInfo = document.getElementById('metaInfo');
+  let currentDigest = null;
 
   function escapeHtml(str) {
     const div = document.createElement('div');
@@ -23,14 +24,15 @@
     }).format(date);
   }
 
-  function renderDigest(item) {
-    digestCard.innerHTML = `
-      <div class="digest-body">
-        <div class="digest-top">
-          <span class="badge badge-section">${escapeHtml(item.section)}</span>
-          <span class="badge badge-date">${escapeHtml(item.digestDate)}</span>
+  function renderCard(item) {
+    const emptyState = item.isEmpty
+      ? `
+        <div class="digest-empty">
+          <p class="digest-empty-title">今日暂无内容</p>
+          <p class="digest-empty-copy">该版面今天没有抓取到可用文章，保留卡片位以便后续刷新。</p>
         </div>
-
+      `
+      : `
         <h2 class="digest-title">${escapeHtml(item.title)}</h2>
         <p class="digest-summary">${escapeHtml(item.summary)}</p>
 
@@ -41,16 +43,27 @@
           <a href="${item.url}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.titleEn)}</a>
         </h3>
         <p class="digest-original-summary">${escapeHtml(item.summaryEn || '')}</p>
+      `;
+
+    const primaryAction = item.isEmpty
+      ? '<span class="action-link action-disabled">暂无原文</span>'
+      : `<a class="action-link action-primary" href="${item.url}" target="_blank" rel="noopener noreferrer">阅读 Nature 原文</a>`;
+
+    return `
+      <article class="digest-card${item.isEmpty ? ' digest-card-empty' : ''}">
+        <div class="digest-top">
+          <span class="badge badge-section">${escapeHtml(item.section)}</span>
+          <span class="badge badge-date">${escapeHtml(item.digestDate)}</span>
+        </div>
+
+        <div class="digest-source">
+          <p class="digest-source-name">${escapeHtml(item.mediaName)}</p>
+          <p class="digest-source-key">${escapeHtml(item.sourceId)}</p>
+        </div>
+
+        ${emptyState}
 
         <div class="digest-meta">
-          <div class="meta-block">
-            <span class="meta-label">来源版面</span>
-            <span class="meta-value">${escapeHtml(item.section)}</span>
-          </div>
-          <div class="meta-block">
-            <span class="meta-label">文章来源</span>
-            <span class="meta-value">${escapeHtml(item.mediaName || 'Nature')}</span>
-          </div>
           <div class="meta-block">
             <span class="meta-label">发布时间</span>
             <span class="meta-value">${escapeHtml(formatDate(item.publishedAt))}</span>
@@ -62,35 +75,52 @@
         </div>
 
         <div class="actions">
-          <a class="action-link action-primary" href="${item.url}" target="_blank" rel="noopener noreferrer">阅读 Nature 原文</a>
-          <button class="action-link action-refresh" id="btnRefresh" type="button">🔄 换一篇</button>
-          <a class="action-link action-secondary" href="https://www.nature.com" target="_blank" rel="noopener noreferrer">打开 Nature 首页</a>
+          ${primaryAction}
+          <button class="action-link action-refresh" data-source-id="${escapeHtml(item.sourceId)}" type="button">换一篇</button>
         </div>
-      </div>
+      </article>
     `;
-
-    const btn = document.getElementById('btnRefresh');
-    if (btn) {
-      btn.addEventListener('click', refreshDaily);
-    }
   }
 
-  async function refreshDaily() {
-    const btn = document.getElementById('btnRefresh');
-    if (btn) {
-      btn.disabled = true;
-      btn.textContent = '⏳ 加载中...';
+  function renderDigest(payload) {
+    currentDigest = payload;
+
+    if (!payload || !Array.isArray(payload.cards) || payload.cards.length === 0) {
+      digestGrid.innerHTML = '<div class="empty">今日日报暂未生成，请稍后再试。</div>';
+      return;
+    }
+
+    digestGrid.innerHTML = payload.cards.map(renderCard).join('');
+  }
+
+  async function refreshCard(sourceId, button) {
+    if (button) {
+      button.disabled = true;
+      button.textContent = '加载中...';
     }
 
     try {
-      const res = await fetch(`${API_BASE}/api/daily/refresh`, { method: 'POST' });
+      const res = await fetch(`${API_BASE}/api/daily/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sourceId }),
+      });
       if (!res.ok) throw new Error('refresh error');
-      const data = await res.json();
-      renderDigest(data);
+
+      const card = await res.json();
+      if (currentDigest && Array.isArray(currentDigest.cards)) {
+        currentDigest = {
+          ...currentDigest,
+          cards: currentDigest.cards.map(item => item.sourceId === sourceId ? card : item),
+        };
+        renderDigest(currentDigest);
+      } else {
+        await fetchDaily();
+      }
     } catch {
-      if (btn) {
-        btn.disabled = false;
-        btn.textContent = '🔄 换一篇';
+      if (button) {
+        button.disabled = false;
+        button.textContent = '换一篇';
       }
       alert('更换失败，请稍后再试');
     }
@@ -114,9 +144,19 @@
       const data = await res.json();
       renderDigest(data);
     } catch {
-      digestCard.innerHTML = '<div class="empty">今日日报暂未生成，请稍后再试。</div>';
+      digestGrid.innerHTML = '<div class="empty">今日日报暂未生成，请稍后再试。</div>';
     }
   }
+
+  digestGrid.addEventListener('click', (event) => {
+    const target = event.target instanceof Element ? event.target.closest('[data-source-id]') : null;
+    if (!target) return;
+
+    const sourceId = target.getAttribute('data-source-id');
+    if (!sourceId) return;
+
+    refreshCard(sourceId, target);
+  });
 
   fetchMeta();
   fetchDaily();

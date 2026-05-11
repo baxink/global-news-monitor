@@ -22,22 +22,62 @@ async function loadModule(relativePath) {
   return import(`data:text/javascript;base64,${encoded}`);
 }
 
+function createDailyCard(row) {
+  return {
+    digest_date: row.digest_date,
+    source_id: row.source_id,
+    section: row.section,
+    article_id: row.article_id ?? null,
+    title_en: row.title_en ?? null,
+    title_zh: row.title_zh ?? null,
+    summary_en: row.summary_en ?? null,
+    summary_zh: row.summary_zh ?? null,
+    url: row.url ?? null,
+    image_url: row.image_url ?? '',
+    published_at: row.published_at ?? null,
+    selected_at: row.selected_at,
+    is_empty: row.is_empty ?? 0,
+    media_name: row.media_name ?? null,
+  };
+}
+
 function createDbMock(state) {
   const queries = [];
+  const getCardsForDate = (digestDate) => [...(state.dailyCardsByDate.get(digestDate)?.values() || [])];
+  const getCard = (digestDate, sourceId) => state.dailyCardsByDate.get(digestDate)?.get(sourceId) || null;
+  const setCard = (row) => {
+    if (!state.dailyCardsByDate.has(row.digest_date)) {
+      state.dailyCardsByDate.set(row.digest_date, new Map());
+    }
+    state.dailyCardsByDate.get(row.digest_date).set(row.source_id, createDailyCard(row));
+  };
 
   return {
     queries,
+    async batch(statements) {
+      for (const statement of statements) {
+        if (typeof statement.run === 'function') {
+          await statement.run();
+        }
+      }
+      return [];
+    },
     prepare(sql) {
       const createStatement = (params = []) => ({
         async first() {
           queries.push({ sql, params, method: 'first' });
 
-          if (sql.includes('SELECT article_id FROM daily_digest WHERE digest_date = ? LIMIT 1')) {
-            return state.dailyDigestByDate.get(params[0]) || null;
+          if (sql.includes('SELECT * FROM daily_digest_cards WHERE digest_date = ? AND source_id = ? LIMIT 1')) {
+            return getCard(params[0], params[1]);
           }
 
-          if (sql.includes('SELECT * FROM daily_digest WHERE digest_date = ? LIMIT 1')) {
-            return state.dailyDigestByDate.get(params[0]) || null;
+          if (sql.includes('SELECT d.*, a.media_name') && sql.includes('WHERE d.digest_date = ? AND d.source_id = ?')) {
+            return getCard(params[0], params[1]);
+          }
+
+          if (sql.includes('SELECT article_id FROM daily_digest_cards WHERE digest_date = ? AND source_id = ? LIMIT 1')) {
+            const row = getCard(params[0], params[1]);
+            return row ? { article_id: row.article_id } : null;
           }
 
           return null;
@@ -45,9 +85,21 @@ function createDbMock(state) {
         async all() {
           queries.push({ sql, params, method: 'all' });
 
-          if (sql.includes('SELECT article_id FROM daily_digest ORDER BY digest_date DESC LIMIT 14')) {
+          if (sql.includes('SELECT article_id FROM daily_digest_cards WHERE source_id = ?')) {
             return {
-              results: [...state.dailyDigestByDate.values()].map(row => ({ article_id: row.article_id })),
+              results: state.recentArticleIdsBySource.get(params[0]) || [],
+            };
+          }
+
+          if (sql.includes('SELECT d.*, a.media_name') && sql.includes('WHERE d.digest_date = ?')) {
+            return {
+              results: getCardsForDate(params[0]),
+            };
+          }
+
+          if (sql.includes('SELECT * FROM daily_digest_cards WHERE digest_date = ?')) {
+            return {
+              results: getCardsForDate(params[0]),
             };
           }
 
@@ -56,18 +108,13 @@ function createDbMock(state) {
         async run() {
           queries.push({ sql, params, method: 'run' });
 
-          if (sql.includes('DELETE FROM daily_digest WHERE digest_date = ?')) {
-            state.dailyDigestByDate.delete(params[0]);
-            return { success: true };
-          }
-
-          if (sql.includes('INSERT OR REPLACE INTO daily_digest')) {
-            const [digestDate, articleId, sourceId, section, titleEn, titleZh, summaryEn, summaryZh, url, imageUrl, publishedAt, selectedAt] = params;
-            state.dailyDigestByDate.set(digestDate, {
+          if (sql.includes('INSERT OR REPLACE INTO daily_digest_cards')) {
+            const [digestDate, sourceId, section, articleId, titleEn, titleZh, summaryEn, summaryZh, url, imageUrl, publishedAt, selectedAt, isEmpty] = params;
+            setCard({
               digest_date: digestDate,
-              article_id: articleId,
               source_id: sourceId,
               section,
+              article_id: articleId,
               title_en: titleEn,
               title_zh: titleZh,
               summary_en: summaryEn,
@@ -76,6 +123,8 @@ function createDbMock(state) {
               image_url: imageUrl,
               published_at: publishedAt,
               selected_at: selectedAt,
+              is_empty: isEmpty,
+              media_name: state.mediaNameBySource.get(sourceId) || 'Nature',
             });
             return { success: true };
           }
@@ -120,16 +169,16 @@ test('rejects write requests from untrusted origins', async () => {
   assert.match(await response.text(), /Forbidden/);
 });
 
-test('keeps the existing digest when refresh cannot select a replacement', async () => {
+test('returns ordered daily cards and fills missing sources with empty placeholders', async () => {
   const mod = await loadModule('../src/index.ts');
   const today = new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const state = {
-    dailyDigestByDate: new Map([
-      [today, {
+    dailyCardsByDate: new Map([
+      [today, new Map([['nature-news', createDailyCard({
         digest_date: today,
-        article_id: 'art_existing',
         source_id: 'nature-news',
         section: 'news',
+        article_id: 'art_existing',
         title_en: 'Existing title',
         title_zh: '现有标题',
         summary_en: 'Existing summary',
@@ -138,35 +187,173 @@ test('keeps the existing digest when refresh cannot select a replacement', async
         image_url: '',
         published_at: '2026-05-11T00:00:00.000Z',
         selected_at: '2026-05-11T00:00:00.000Z',
-      }],
+        is_empty: 0,
+        media_name: 'Nature',
+      })]])],
+    ]),
+    recentArticleIdsBySource: new Map(),
+    mediaNameBySource: new Map([
+      ['nature-news', 'Nature'],
+      ['nature-reviews-bioengineering', 'Nature Reviews Bioengineering'],
     ]),
   };
   const db = createDbMock(state);
+  const env = {
+    DB: db,
+    AI: { run() { throw new Error('AI should not be used for reads'); } },
+    FRONTEND_ORIGIN: 'https://baxink.github.io',
+  };
 
+  const response = await mod.default.fetch(new Request('https://example.com/api/daily'), env);
+  assert.equal(response.status, 200);
+
+  const payload = await response.json();
+  assert.equal(payload.digestDate, today);
+  assert.equal(payload.cards.length, 7);
+  assert.deepEqual(payload.cards.map(card => card.sourceId), [
+    'nature-main-rss',
+    'nature-news',
+    'nature-opinion',
+    'nature-research-analysis',
+    'nature-research-articles',
+    'nature-careers',
+    'nature-reviews-bioengineering',
+  ]);
+  assert.equal(payload.cards[1].isEmpty, false);
+  assert.equal(payload.cards[1].title, '现有标题');
+  assert.equal(payload.cards[6].isEmpty, true);
+  assert.equal(payload.cards[6].title, '');
+});
+
+test('rejects refresh requests without a sourceId', async () => {
+  const mod = await loadModule('../src/index.ts');
+  const env = {
+    DB: {
+      prepare() {
+        throw new Error('DB should not be used for invalid refresh requests');
+      },
+    },
+    AI: {
+      run() {
+        throw new Error('AI should not be used for invalid refresh requests');
+      },
+    },
+    FRONTEND_ORIGIN: 'https://baxink.github.io',
+  };
+
+  const response = await mod.default.fetch(new Request('https://example.com/api/daily/refresh', {
+    method: 'POST',
+    headers: {
+      Origin: 'https://baxink.github.io',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({}),
+  }), env);
+
+  assert.equal(response.status, 400);
+  assert.match(await response.text(), /sourceId/i);
+});
+
+test('refreshes only the targeted source card', async () => {
+  const mod = await loadModule('../src/index.ts');
+  const today = new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const state = {
+    dailyCardsByDate: new Map([
+      [today, new Map([
+        ['nature-main-rss', createDailyCard({
+          digest_date: today,
+          source_id: 'nature-main-rss',
+          section: 'main',
+          article_id: 'art_old',
+          title_en: 'Old main title',
+          title_zh: '旧主刊标题',
+          summary_en: 'Old main summary',
+          summary_zh: '旧主刊摘要',
+          url: 'https://www.nature.com/articles/old-main',
+          image_url: '',
+          published_at: '2026-05-01T00:00:00.000Z',
+          selected_at: '2026-05-11T00:00:00.000Z',
+          is_empty: 0,
+          media_name: 'Nature',
+        })],
+        ['nature-news', createDailyCard({
+          digest_date: today,
+          source_id: 'nature-news',
+          section: 'news',
+          article_id: 'art_news',
+          title_en: 'News title',
+          title_zh: '新闻标题',
+          summary_en: 'News summary',
+          summary_zh: '新闻摘要',
+          url: 'https://www.nature.com/articles/news',
+          image_url: '',
+          published_at: '2026-05-02T00:00:00.000Z',
+          selected_at: '2026-05-11T00:00:00.000Z',
+          is_empty: 0,
+          media_name: 'Nature',
+        })],
+      ])],
+    ]),
+    recentArticleIdsBySource: new Map([
+      ['nature-main-rss', [{ article_id: 'art_old' }]],
+    ]),
+    mediaNameBySource: new Map([
+      ['nature-main-rss', 'Nature'],
+      ['nature-news', 'Nature'],
+    ]),
+  };
+  const db = createDbMock(state);
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = async () => new Response('', { status: 200 });
+  globalThis.fetch = async (input) => {
+    const url = typeof input === 'string' ? input : input.url;
+    if (url === 'https://www.nature.com/nature.rss') {
+      return new Response(`<?xml version="1.0"?>
+        <rss version="2.0"><channel>
+          <item>
+            <title>Latest main article</title>
+            <link>https://www.nature.com/articles/new-main</link>
+            <description>Fresh summary</description>
+            <pubDate>Mon, 11 May 2026 00:00:00 GMT</pubDate>
+          </item>
+          <item>
+            <title>Older main article</title>
+            <link>https://www.nature.com/articles/old-main</link>
+            <description>Old summary</description>
+            <pubDate>Sun, 10 May 2026 00:00:00 GMT</pubDate>
+          </item>
+        </channel></rss>`, { status: 200 });
+    }
+
+    return new Response('', { status: 200 });
+  };
 
   try {
     const env = {
       DB: db,
       AI: {
         run() {
-          return { response: '{"titleZh":"标题","summaryZh":"摘要"}' };
+          return { response: '{"titleZh":"新主刊标题","summaryZh":"新主刊摘要"}' };
         },
       },
       FRONTEND_ORIGIN: 'https://baxink.github.io',
     };
 
-    const request = new Request('https://example.com/api/daily/refresh', {
+    const response = await mod.default.fetch(new Request('https://example.com/api/daily/refresh', {
       method: 'POST',
-      headers: { Origin: 'https://baxink.github.io' },
-    });
+      headers: {
+        Origin: 'https://baxink.github.io',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ sourceId: 'nature-main-rss' }),
+    }), env);
 
-    const response = await mod.default.fetch(request, env);
-    assert.equal(response.status, 404);
-    assert.ok(state.dailyDigestByDate.has(today));
-    assert.equal(state.dailyDigestByDate.get(today).article_id, 'art_existing');
-    assert.equal(db.queries.some(entry => entry.sql.includes('DELETE FROM daily_digest WHERE digest_date = ?')), false);
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.equal(payload.sourceId, 'nature-main-rss');
+    assert.equal(payload.url, 'https://www.nature.com/articles/new-main');
+    assert.equal(payload.isEmpty, false);
+    assert.equal(state.dailyCardsByDate.get(today).get('nature-news').url, 'https://www.nature.com/articles/news');
+    assert.equal(state.dailyCardsByDate.get(today).get('nature-main-rss').url, 'https://www.nature.com/articles/new-main');
   } finally {
     globalThis.fetch = originalFetch;
   }

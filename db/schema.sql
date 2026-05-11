@@ -56,6 +56,24 @@ CREATE TABLE IF NOT EXISTS daily_digest (
   selected_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS daily_digest_cards (
+  digest_date TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  section TEXT NOT NULL,
+  article_id TEXT,
+  title_en TEXT,
+  title_zh TEXT,
+  summary_en TEXT,
+  summary_zh TEXT,
+  url TEXT,
+  image_url TEXT,
+  published_at TEXT,
+  selected_at TEXT NOT NULL,
+  is_empty INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (digest_date, source_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_articles_source_published ON articles(source_id, published_at DESC);
 CREATE INDEX IF NOT EXISTS idx_articles_fetched ON articles(fetched_at DESC);
 CREATE INDEX IF NOT EXISTS idx_daily_digest_selected ON daily_digest(selected_at DESC);
+CREATE INDEX IF NOT EXISTS idx_daily_digest_cards_selected ON daily_digest_cards(selected_at DESC);
