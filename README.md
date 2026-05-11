@@ -1,24 +1,36 @@
 # nature-daily
 
-每天北京时间早上 6 点自动抓取并生成一篇 Nature 日报，在 GitHub Pages 页面上展示中文摘要、原标题、版面信息和原文链接。
+每天北京时间早上 6 点自动抓取 Nature 文章，用 Cloudflare Workers AI 生成中文摘要，在 GitHub Pages 展示。
 
-GitHub Pages: [https://baxink.github.io/nature-daily/](https://baxink.github.io/nature-daily/)
+🔗 [baxink.github.io/nature-daily](https://baxink.github.io/nature-daily/)
 
 ## 功能
 
-- 按天轮换 Nature 不同版面
-- 每天选出 1 篇文章作为当日推荐
-- 自动生成中文标题与中文摘要
-- GitHub 静态页面实时读取当日内容
-- Cloudflare Worker 每天北京时间 6:00 自动更新
+- 抓取 Nature 6 个版面（news / opinion / research / careers / main RSS 等）
+- 每天按版面轮换，选出一篇推荐
+- **Cloudflare Workers AI 免费内置模型** 生成中文标题与摘要
+- 前端 **换一篇** 按钮，手动刷新当日推荐
+- GitHub Pages 静态页面实时读取
 
 ## 技术栈
 
-- **前端**: 纯 HTML/CSS/JS → GitHub Pages
-- **后端**: Cloudflare Workers (TypeScript)
-- **数据库**: Cloudflare D1
-- **定时任务**: Workers Cron Triggers
-- **代码托管**: GitHub
+| 层 | 技术 |
+|---|---|
+| 前端 | HTML / CSS / JS → GitHub Pages |
+| 后端 | Cloudflare Workers (TypeScript) |
+| 翻译 | Cloudflare Workers AI (`llama-3.1-8b-instruct`) |
+| 数据库 | Cloudflare D1 |
+| 定时 | Workers Cron Triggers (`0 22 * * *` UTC = 北京时间 6:00) |
+
+## 项目结构
+
+```
+nature-daily/
+  docs/           # GitHub Pages 前端
+  worker/         # Cloudflare Worker
+  shared/         # Nature 来源配置 (JSON)
+  db/             # D1 schema 与 seed
+```
 
 ## 部署
 
@@ -29,50 +41,34 @@ cd worker
 npx wrangler d1 create nature-daily-db
 ```
 
-把输出的 `database_id` 写入 [worker/wrangler.toml](worker/wrangler.toml)。
+把输出的 `database_id` 写入 `worker/wrangler.toml`。
 
 ### 2. 初始化数据库
 
 ```bash
+cd worker
 npm run db:init
 npm run db:seed
 ```
 
-### 3. 配置免费 API Key
-
-在 Worker 环境里添加 `FREE_API_KEY`，用于生成中文标题与摘要。
-
-前往 [ChatAnywhere](https://api.chatanywhere.tech/v1/oauth/free/render) 用 GitHub 账号免费领取 API Key（gpt-4o-mini 200次/天，完全够用）。
+### 3. 部署 Worker
 
 ```bash
 cd worker
-npx wrangler secret put FREE_API_KEY
+npx wrangler deploy
 ```
 
-### 4. 部署 Worker
+### 4. 手动触发一次抓取
 
 ```bash
-npm run deploy:worker
-```
-
-### 5. 手动触发一次抓取
-
-```bash
-curl -X POST https://<your-worker-subdomain>.workers.dev/api/ingest
-```
-
-## 项目结构
-
-```text
-nature-daily/
-  docs/           # GitHub Pages 静态页面
-  worker/         # Cloudflare Worker
-  shared/         # Nature 来源配置
-  db/             # D1 schema 与 seed
+curl -X POST https://<your-worker>.workers.dev/api/ingest
 ```
 
 ## API
 
-- `GET /api/daily` — 获取当天日报
-- `GET /api/meta` — 获取抓取元数据
-- `POST /api/ingest` — 手动触发当天抓取与选文
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/daily` | 获取当日日报 |
+| POST | `/api/daily/refresh` | **换一篇**：重新选文并翻译 |
+| GET | `/api/meta` | 数据库统计信息 |
+| POST | `/api/ingest` | 手动触发抓取与选文 |
