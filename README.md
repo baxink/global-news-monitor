@@ -1,15 +1,15 @@
 # nature-daily
 
-每天北京时间早上 6 点自动抓取 Nature 文章，用 Cloudflare Workers AI 生成中文摘要，在 GitHub Pages 展示。
+每天北京时间早上 6 点自动抓取 Nature 文章，用 Cloudflare Workers AI 生成中文摘要，并以报纸式首页在 GitHub Pages 展示。
 
 🔗 [baxink.github.io/nature-daily](https://baxink.github.io/nature-daily/)
 
 ## 功能
 
 - 抓取 Nature 7 个版面（main / news / opinion / research-analysis / research-articles / careers / Nature Reviews Bioengineering）
-- 每天每个版面各精选 1 篇，组成 7 卡日报
+- 每天每个版面各精选 1 篇，组成 7 篇日报首页
 - **Cloudflare Workers AI 免费内置模型** 生成中文标题与摘要
-- 前端每张卡片都有 **换一篇** 按钮，单独刷新当前版面
+- 前端固定主刊头条 + 6 个栏目分栏，每个版面都支持 **换一篇** 单独刷新
 - GitHub Pages 静态页面实时读取
 
 ## 技术栈
@@ -69,6 +69,12 @@ curl -X POST https://<your-worker>.workers.dev/api/ingest
 ## 日常更新顺序
 
 当你修改来源配置、Worker 逻辑或数据库结构时，按这个顺序发布：
+
+也可以先运行下面这个本地预检脚本，它会根据当前 git 变更自动打印本次发布需要的命令，不会真的执行远端操作：
+
+```bash
+npm run release:plan
+```
 
 1. 本地验证
 
