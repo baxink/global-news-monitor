@@ -107,6 +107,24 @@ test('renderDigest keeps the lead slot visible when the lead story is empty', ()
   assert.match(lead.textContent, /今日主版块暂无可用文章/u);
 });
 
+test('page render exposes separate lead and section anchors', () => {
+  setupDom();
+  const app = createDigestApp({
+    apiBase: 'https://example.com',
+    digestRoot: document.getElementById('digestGrid'),
+    metaRoot: document.getElementById('metaInfo'),
+    fetchImpl: async () => {
+      throw new Error('not used');
+    },
+  });
+
+  app.renderDigest(samplePayload());
+
+  assert.ok(document.querySelector('.frontpage-layout'));
+  assert.ok(document.querySelector('.lead-story-shell'));
+  assert.ok(document.querySelector('.section-columns'));
+});
+
 test('mergeCardUpdate replaces only the matching source item', () => {
   setupDom();
   const app = createDigestApp({
@@ -151,13 +169,80 @@ test('mergeCardUpdate replaces only the matching source item', () => {
   const lead = document.querySelector('[data-role="lead-story"]');
   const sections = [...document.querySelectorAll('[data-role="section-story"]')];
   const sectionText = sections.map((node) => node.textContent).join(' ');
-  const newsMentions = sections.filter((node) => /新闻栏目/u.test(node.textContent));
+  const staleNewsMentions = sections.filter((node) => /新闻栏目(?!已刷新)/u.test(node.textContent));
   const updatedNewsMentions = sections.filter((node) => /新闻栏目已刷新/u.test(node.textContent));
 
   assert.match(lead.textContent, /主版块头条/u);
   assert.equal(sections.length, 2);
-  assert.equal(newsMentions.length, 0);
+  assert.equal(staleNewsMentions.length, 0);
   assert.equal(updatedNewsMentions.length, 1);
   assert.match(sectionText, /新闻栏目已刷新/u);
   assert.match(sectionText, /观点栏目/u);
+});
+
+test('section stories render as newspaper items rather than digest cards', () => {
+  setupDom();
+  const app = createDigestApp({
+    apiBase: 'https://example.com',
+    digestRoot: document.getElementById('digestGrid'),
+    metaRoot: document.getElementById('metaInfo'),
+    fetchImpl: async () => {
+      throw new Error('not used');
+    },
+  });
+
+  const payload = samplePayload();
+  payload.cards.push(
+    {
+      sourceId: 'nature-opinion',
+      section: 'Opinion',
+      mediaName: 'Nature',
+      title: '观点栏目',
+      titleEn: 'Opinion story',
+      summary: '观点摘要。',
+      summaryEn: 'Opinion summary.',
+      url: 'https://example.com/opinion',
+      publishedAt: '2026-05-11T02:00:00.000Z',
+      selectedAt: '2026-05-11T02:30:00.000Z',
+      isEmpty: false,
+    },
+    {
+      sourceId: 'nature-research-analysis',
+      section: 'Research Analysis',
+      mediaName: 'Nature',
+      title: '分析栏目',
+      titleEn: 'Analysis story',
+      summary: '分析摘要。',
+      summaryEn: 'Analysis summary.',
+      url: 'https://example.com/analysis',
+      publishedAt: '2026-05-11T04:00:00.000Z',
+      selectedAt: '2026-05-11T04:30:00.000Z',
+      isEmpty: false,
+    }
+  );
+
+  app.renderDigest(payload);
+
+  assert.equal(document.querySelectorAll('.digest-card').length, 0);
+  assert.ok(document.querySelector('.lead-story-shell'));
+  assert.ok(document.querySelector('.section-columns'));
+});
+
+test('renderDigest emits the class names required by the newspaper layout', () => {
+  setupDom();
+  const app = createDigestApp({
+    apiBase: 'https://example.com',
+    digestRoot: document.getElementById('digestGrid'),
+    metaRoot: document.getElementById('metaInfo'),
+    fetchImpl: async () => {
+      throw new Error('not used');
+    },
+  });
+
+  app.renderDigest(samplePayload());
+
+  assert.ok(document.querySelector('.frontpage-layout'));
+  assert.ok(document.querySelector('.lead-headline'));
+  assert.ok(document.querySelector('.section-columns'));
+  assert.ok(document.querySelector('.section-story'));
 });

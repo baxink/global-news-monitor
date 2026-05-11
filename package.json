@@ -2,12 +2,15 @@
   "name": "nature-daily",
   "version": "1.0.0",
   "private": true,
+  "type": "module",
   "description": "Nature 七版面每日摘要",
   "scripts": {
     "dev:worker": "cd worker && npm run dev",
     "deploy:worker": "cd worker && npm run deploy",
     "db:init": "cd worker && npm run db:init",
     "db:seed": "cd worker && npm run db:seed",
+    "release:plan": "node scripts/release-plan.mjs",
+    "test:release-plan": "node --test scripts/release-plan.test.mjs",
     "test:docs": "node --test docs/app.test.mjs"
   },
   "devDependencies": {
