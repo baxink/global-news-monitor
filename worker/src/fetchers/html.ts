@@ -49,6 +49,69 @@ function inferPublishedAtFromId(url: string): string | undefined {
   return `${match[1]}-${match[2]}-01T00:00:00.000Z`;
 }
 
+function getHtmlAttribute(tag: string, name: string): string {
+  const regex = new RegExp(`\\b${name}\\s*=\\s*["']([^"']+)["']`, 'i');
+  const match = tag.match(regex);
+  return match ? decodeHtml(match[1]).trim() : '';
+}
+
+function normalizePublishedAt(value: string): string | undefined {
+  const cleaned = decodeHtml(value).trim();
+  const parsed = new Date(cleaned);
+  if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
+
+  const dateOnly = cleaned.match(/\b(20\d{2})[-/](\d{1,2})[-/](\d{1,2})\b/);
+  if (!dateOnly) return undefined;
+
+  const year = Number(dateOnly[1]);
+  const month = Number(dateOnly[2]) - 1;
+  const day = Number(dateOnly[3]);
+  return new Date(Date.UTC(year, month, day)).toISOString();
+}
+
+function extractPublishedAtFromHtml(html: string): string | undefined {
+  const publishedMetaNames = new Set([
+    'article:published_time',
+    'og:published_time',
+    'pubdate',
+    'date',
+    'datepublished',
+    'dc.date',
+    'dc:date',
+  ]);
+
+  const metaRegex = /<meta\b[^>]*>/gi;
+  let metaMatch: RegExpExecArray | null;
+  while ((metaMatch = metaRegex.exec(html)) !== null) {
+    const tag = metaMatch[0];
+    const name = (
+      getHtmlAttribute(tag, 'property') ||
+      getHtmlAttribute(tag, 'name') ||
+      getHtmlAttribute(tag, 'itemprop')
+    ).toLowerCase();
+
+    if (!publishedMetaNames.has(name)) continue;
+
+    const content = getHtmlAttribute(tag, 'content');
+    if (!content) continue;
+
+    const publishedAt = normalizePublishedAt(content);
+    if (publishedAt) return publishedAt;
+  }
+
+  const timeRegex = /<time\b[^>]*>/gi;
+  let timeMatch: RegExpExecArray | null;
+  while ((timeMatch = timeRegex.exec(html)) !== null) {
+    const datetime = getHtmlAttribute(timeMatch[0], 'datetime');
+    if (!datetime) continue;
+
+    const publishedAt = normalizePublishedAt(datetime);
+    if (publishedAt) return publishedAt;
+  }
+
+  return undefined;
+}
+
 export async function fetchHtml(url: string, timeoutMs: number = 10000): Promise<RawArticle[]> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -77,11 +140,15 @@ export async function fetchHtml(url: string, timeoutMs: number = 10000): Promise
       const title = inferTitle(match[2]);
       if (title.length < 12) continue;
 
+      const contextStart = Math.max(0, match.index - 800);
+      const contextEnd = Math.min(text.length, anchorRegex.lastIndex + 1200);
+      const context = text.slice(contextStart, contextEnd);
+
       seen.add(link);
       items.push({
         title,
         link,
-        pubDate: inferPublishedAtFromId(link),
+        pubDate: extractPublishedAtFromHtml(context) || inferPublishedAtFromId(link),
       });
     }
 

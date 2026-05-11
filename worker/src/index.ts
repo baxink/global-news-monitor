@@ -65,18 +65,53 @@ interface DigestPayload {
 
 const DEFAULT_FRONTEND_ORIGIN = 'https://baxink.github.io';
 
-function corsHeaders(origin: string): Record<string, string> {
-  return {
-    'Access-Control-Allow-Origin': origin,
+function getConfiguredFrontendOrigin(env: Env): string {
+  return env.FRONTEND_ORIGIN || DEFAULT_FRONTEND_ORIGIN;
+}
+
+function isAllowedOrigin(origin: string, allowedOrigin: string): boolean {
+  try {
+    return new URL(origin).origin === new URL(allowedOrigin).origin;
+  } catch {
+    return false;
+  }
+}
+
+function getCorsOrigin(request: Request, env: Env): string | null {
+  const origin = request.headers.get('Origin');
+  const allowedOrigin = getConfiguredFrontendOrigin(env);
+
+  if (!origin) return allowedOrigin;
+  return isAllowedOrigin(origin, allowedOrigin) ? origin : null;
+}
+
+function hasDisallowedOrigin(request: Request, env: Env): boolean {
+  return request.headers.has('Origin') && !getCorsOrigin(request, env);
+}
+
+function corsHeaders(origin: string | null): Record<string, string> {
+  const headers: Record<string, string> = {
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
     'Cache-Control': 'public, max-age=300',
+    'Vary': 'Origin',
   };
+
+  if (origin) {
+    headers['Access-Control-Allow-Origin'] = origin;
+  }
+
+  return headers;
 }
 
-function getRequestOrigin(request: Request): string {
-  const origin = request.headers.get('Origin');
-  return origin || DEFAULT_FRONTEND_ORIGIN;
+function forbiddenResponse(request: Request, env: Env): Response {
+  return new Response(JSON.stringify({ error: 'Forbidden origin' }), {
+    status: 403,
+    headers: {
+      'Content-Type': 'application/json',
+      ...corsHeaders(getCorsOrigin(request, env)),
+    },
+  });
 }
 
 function toDigestDate(date: Date = new Date()): string {
@@ -326,7 +361,7 @@ async function handleDaily(env: Env, request: Request): Promise<Response> {
       status: 404,
       headers: {
         'Content-Type': 'application/json',
-        ...corsHeaders(getRequestOrigin(request)),
+        ...corsHeaders(getCorsOrigin(request, env)),
       },
     });
   }
@@ -334,7 +369,7 @@ async function handleDaily(env: Env, request: Request): Promise<Response> {
   return new Response(JSON.stringify(mapDigestRow(digest)), {
     headers: {
       'Content-Type': 'application/json',
-      ...corsHeaders(getRequestOrigin(request)),
+      ...corsHeaders(getCorsOrigin(request, env)),
     },
   });
 }
@@ -367,7 +402,7 @@ async function handleMeta(env: Env, request: Request): Promise<Response> {
     {
       headers: {
         'Content-Type': 'application/json',
-        ...corsHeaders(getRequestOrigin(request)),
+        ...corsHeaders(getCorsOrigin(request, env)),
       },
     }
   );
@@ -378,7 +413,7 @@ async function handleIngest(env: Env, request: Request): Promise<Response> {
   return new Response(JSON.stringify(result), {
     headers: {
       'Content-Type': 'application/json',
-      ...corsHeaders(getRequestOrigin(request)),
+      ...corsHeaders(getCorsOrigin(request, env)),
     },
   });
 }
@@ -393,9 +428,6 @@ async function handleRefresh(env: Env, request: Request): Promise<Response> {
   const excludeIds = new Set<string>();
   if (existingDigest) {
     excludeIds.add(existingDigest.article_id);
-    await env.DB.prepare(
-      'DELETE FROM daily_digest WHERE digest_date = ?'
-    ).bind(today).run();
   }
 
   const sources = getEnabledSources();
@@ -417,7 +449,7 @@ async function handleRefresh(env: Env, request: Request): Promise<Response> {
       status: 404,
       headers: {
         'Content-Type': 'application/json',
-        ...corsHeaders(getRequestOrigin(request)),
+        ...corsHeaders(getCorsOrigin(request, env)),
       },
     });
   }
@@ -432,7 +464,7 @@ async function handleRefresh(env: Env, request: Request): Promise<Response> {
   return new Response(JSON.stringify(mapDigestRow(digestWithMedia || digest)), {
     headers: {
       'Content-Type': 'application/json',
-      ...corsHeaders(getRequestOrigin(request)),
+      ...corsHeaders(getCorsOrigin(request, env)),
     },
   });
 }
@@ -442,8 +474,12 @@ export default {
     const url = new URL(request.url);
 
     if (request.method === 'OPTIONS') {
+      if (hasDisallowedOrigin(request, env)) {
+        return forbiddenResponse(request, env);
+      }
+
       return new Response(null, {
-        headers: corsHeaders(getRequestOrigin(request)),
+        headers: corsHeaders(getCorsOrigin(request, env)),
       });
     }
 
@@ -456,10 +492,18 @@ export default {
     }
 
     if (url.pathname === '/api/ingest' && request.method === 'POST') {
+      if (hasDisallowedOrigin(request, env)) {
+        return forbiddenResponse(request, env);
+      }
+
       return handleIngest(env, request);
     }
 
     if (url.pathname === '/api/daily/refresh' && request.method === 'POST') {
+      if (hasDisallowedOrigin(request, env)) {
+        return forbiddenResponse(request, env);
+      }
+
       return handleRefresh(env, request);
     }
 
