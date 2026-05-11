@@ -103,6 +103,7 @@ function stripMarkdownFence(text: string): string {
 
 async function summarizeInChinese(env: Env, article: NormalizedArticle): Promise<{ titleZh: string; summaryZh: string }> {
   if (!env.FREE_API_KEY) {
+    console.error('[summarize] FREE_API_KEY not set');
     return {
       titleZh: article.title,
       summaryZh: article.summary || article.title,
@@ -118,41 +119,54 @@ async function summarizeInChinese(env: Env, article: NormalizedArticle): Promise
     `链接：${article.url}`,
   ].join('\n');
 
-  const res = await fetch('https://api.chatanywhere.tech/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${env.FREE_API_KEY}`,
-    },
-    body: JSON.stringify({
-      model: 'gpt-4o-mini',
-      messages: [{ role: 'user', content: prompt }],
-    }),
-  });
-
-  if (!res.ok) {
-    return {
-      titleZh: article.title,
-      summaryZh: article.summary || article.title,
-    };
-  }
-
-  const data = await res.json() as {
-    choices?: Array<{
-      message?: { content?: string };
-    }>;
-  };
-
-  const outputText = data.choices?.[0]?.message?.content || '';
-  const text = stripMarkdownFence(outputText);
-
   try {
-    const parsed = JSON.parse(text) as { titleZh?: string; summaryZh?: string };
-    return {
-      titleZh: parsed.titleZh?.trim() || article.title,
-      summaryZh: parsed.summaryZh?.trim() || article.summary || article.title,
+    const res = await fetch('https://api.chatanywhere.org/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${env.FREE_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        messages: [{ role: 'user', content: prompt }],
+      }),
+    });
+
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '');
+      console.error(`[summarize] API error ${res.status}: ${errText.slice(0, 200)}`);
+      return {
+        titleZh: article.title,
+        summaryZh: article.summary || article.title,
+      };
+    }
+
+    const data = await res.json() as {
+      choices?: Array<{
+        message?: { content?: string };
+      }>;
     };
-  } catch {
+
+    const outputText = data.choices?.[0]?.message?.content || '';
+    console.log(`[summarize] raw output: ${outputText.slice(0, 100)}`);
+    const text = stripMarkdownFence(outputText);
+
+    try {
+      const parsed = JSON.parse(text) as { titleZh?: string; summaryZh?: string };
+      console.log(`[summarize] parsed: titleZh=${parsed.titleZh?.slice(0, 30)}, summaryZh=${parsed.summaryZh?.slice(0, 30)}`);
+      return {
+        titleZh: parsed.titleZh?.trim() || article.title,
+        summaryZh: parsed.summaryZh?.trim() || article.summary || article.title,
+      };
+    } catch {
+      console.error(`[summarize] JSON parse failed for: ${text.slice(0, 200)}`);
+      return {
+        titleZh: article.title,
+        summaryZh: article.summary || article.title,
+      };
+    }
+  } catch (err) {
+    console.error(`[summarize] fetch failed: ${String(err)}`);
     return {
       titleZh: article.title,
       summaryZh: article.summary || article.title,
