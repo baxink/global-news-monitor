@@ -7,17 +7,19 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <header class="hero">
-    <div class="hero-inner">
-      <p class="eyebrow">Nature Daily Digest</p>
-      <h1 class="title">nature-daily</h1>
-      <p class="subtitle">每天北京时间早上 6 点自动更新 7 个 Nature 版面，每个版面精选 1 篇文章</p>
-      <p class="meta-info" id="metaInfo">加载中...</p>
+  <header class="masthead">
+    <div class="masthead-inner">
+      <p class="masthead-kicker">Nature Daily Digest</p>
+      <h1 class="masthead-title">Nature Daily</h1>
+      <div class="masthead-meta">
+        <p class="masthead-summary">每天北京时间早上 6 点自动更新 7 个 Nature 版面，每版精选 1 篇文章。</p>
+        <p class="meta-info" id="metaInfo">加载中...</p>
+      </div>
     </div>
   </header>
 
-  <main class="main">
-    <section class="digest-grid" id="digestGrid">
+  <main class="frontpage" id="digestGrid">
+    <section class="frontpage-loading">
       <div class="loading">正在加载今日日报...</div>
     </section>
   </main>
@@ -26,6 +28,6 @@
     <p>数据来源：Nature 公开页面与 RSS · 页面仅做个人学习与阅读索引</p>
   </footer>
 
-  <script src="app.js"></script>
+  <script type="module" src="app.js"></script>
 </body>
 </html>
