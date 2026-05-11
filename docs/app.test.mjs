@@ -151,8 +151,13 @@ test('mergeCardUpdate replaces only the matching source item', () => {
   const lead = document.querySelector('[data-role="lead-story"]');
   const sections = [...document.querySelectorAll('[data-role="section-story"]')];
   const sectionText = sections.map((node) => node.textContent).join(' ');
+  const newsMentions = sections.filter((node) => /新闻栏目/u.test(node.textContent));
+  const updatedNewsMentions = sections.filter((node) => /新闻栏目已刷新/u.test(node.textContent));
 
   assert.match(lead.textContent, /主版块头条/u);
+  assert.equal(sections.length, 2);
+  assert.equal(newsMentions.length, 0);
+  assert.equal(updatedNewsMentions.length, 1);
   assert.match(sectionText, /新闻栏目已刷新/u);
   assert.match(sectionText, /观点栏目/u);
 });
