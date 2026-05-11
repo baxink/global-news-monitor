@@ -104,9 +104,7 @@ async function handleMeta(env: Env): Promise<Response> {
     'SELECT DISTINCT country FROM articles ORDER BY country'
   ).all<{ country: string }>();
 
-  const sourceCount = await env.DB.prepare(
-    'SELECT COUNT(*) as count FROM media_sources WHERE enabled = 1'
-  ).first<{ count: number }>();
+  const sourceCount = getEnabledSources().length;
 
   const lastRun = await env.DB.prepare(
     'SELECT * FROM ingest_runs ORDER BY started_at DESC LIMIT 1'
@@ -119,7 +117,7 @@ async function handleMeta(env: Env): Promise<Response> {
   return new Response(
     JSON.stringify({
       countries: countries.map(r => r.country),
-      sourceCount: sourceCount?.count || 0,
+      sourceCount,
       articleCount: articleCount?.count || 0,
       lastUpdate: lastRun?.finished_at || lastRun?.started_at || null,
       lastRunStatus: lastRun?.status || null,

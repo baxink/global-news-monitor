@@ -200,7 +200,8 @@
       const res = await fetch(`${API_BASE}/api/meta`);
       if (!res.ok) throw new Error('meta error');
       const data = await res.json();
-      metaInfo.textContent = `已配置 ${data.sourceCount} 个版面 · 已抓取 ${data.articleCount} 篇文章 · 已生成 ${data.digestCount} 期日报`;
+      const configuredSourceCount = Math.max(SOURCE_SPECS.length, Number(data.sourceCount) || 0);
+      metaInfo.textContent = `已配置 ${configuredSourceCount} 个版面 · 已抓取 ${data.articleCount} 篇文章 · 已生成 ${data.digestCount} 期日报`;
     } catch {
       metaInfo.textContent = '无法获取更新状态';
     }

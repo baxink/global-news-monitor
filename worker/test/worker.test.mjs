@@ -68,6 +68,22 @@ function createDbMock(state) {
         async first() {
           queries.push({ sql, params, method: 'first' });
 
+          if (sql.includes('SELECT COUNT(*) as count FROM media_sources WHERE enabled = 1')) {
+            return { count: state.metaSourceCount ?? 0 };
+          }
+
+          if (sql.includes('SELECT COUNT(*) as count FROM articles')) {
+            return { count: state.metaArticleCount ?? 0 };
+          }
+
+          if (sql.includes('SELECT COUNT(DISTINCT digest_date) as count FROM daily_digest_cards')) {
+            return { count: state.metaDigestCount ?? 0 };
+          }
+
+          if (sql.includes('SELECT * FROM ingest_runs ORDER BY started_at DESC LIMIT 1')) {
+            return state.lastRun ?? null;
+          }
+
           if (sql.includes('SELECT * FROM daily_digest_cards WHERE digest_date = ? AND source_id = ? LIMIT 1')) {
             return getCard(params[0], params[1]);
           }
@@ -176,6 +192,38 @@ test('rejects write requests from untrusted origins', async () => {
   const response = await mod.default.fetch(request, env);
   assert.equal(response.status, 403);
   assert.match(await response.text(), /Forbidden/);
+});
+
+test('reports the configured source count in meta even if the seeded table is stale', async () => {
+  const mod = await loadModule('../src/index.ts');
+  const env = {
+    DB: createDbMock({
+      dailyCardsByDate: new Map(),
+      recentArticleIdsBySource: new Map(),
+      mediaNameBySource: new Map(),
+      metaSourceCount: 6,
+      metaArticleCount: 42,
+      metaDigestCount: 3,
+      lastRun: {
+        id: 'run_1',
+        started_at: '2026-05-11T00:00:00.000Z',
+        finished_at: '2026-05-11T00:05:00.000Z',
+        status: 'success',
+        success_count: 7,
+        failure_count: 0,
+      },
+    }),
+    AI: { run() { throw new Error('AI should not be used for meta'); } },
+    FRONTEND_ORIGIN: 'https://baxink.github.io',
+  };
+
+  const response = await mod.default.fetch(new Request('https://example.com/api/meta'), env);
+  assert.equal(response.status, 200);
+
+  const payload = await response.json();
+  assert.equal(payload.sourceCount, 7);
+  assert.equal(payload.articleCount, 42);
+  assert.equal(payload.digestCount, 3);
 });
 
 test('returns ordered daily cards and fills missing sources with empty placeholders', async () => {

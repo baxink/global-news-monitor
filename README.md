@@ -34,6 +34,8 @@ nature-daily/
 
 ## 部署
 
+说明：来源配置以 `shared/media-sources.json` 为准。若你新增或调整版面，除了部署 Worker，还需要重新执行一次 `db/seed.sql`，让远端 `media_sources` 表与代码配置保持一致。
+
 ### 1. 创建 D1 数据库
 
 ```bash

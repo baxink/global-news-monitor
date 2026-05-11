@@ -488,9 +488,7 @@ async function handleDaily(env: Env, request: Request): Promise<Response> {
 }
 
 async function handleMeta(env: Env, request: Request): Promise<Response> {
-  const sourceCount = await env.DB.prepare(
-    'SELECT COUNT(*) as count FROM media_sources WHERE enabled = 1'
-  ).first<{ count: number }>();
+  const configuredSourceCount = getOrderedSources().length;
 
   const lastRun = await env.DB.prepare(
     'SELECT * FROM ingest_runs ORDER BY started_at DESC LIMIT 1'
@@ -505,7 +503,7 @@ async function handleMeta(env: Env, request: Request): Promise<Response> {
   ).first<{ count: number }>();
 
   return jsonResponse(request, env, {
-    sourceCount: sourceCount?.count || 0,
+    sourceCount: configuredSourceCount,
     articleCount: articleCount?.count || 0,
     digestCount: digestCount?.count || 0,
     lastUpdate: lastRun?.finished_at || lastRun?.started_at || null,
