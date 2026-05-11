@@ -3,6 +3,7 @@ node_modules/
 .dev.vars
 .env
 dist/
+.worktrees/
 .DS_Store
 *.log
 .env.deploy
