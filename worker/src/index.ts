@@ -132,7 +132,8 @@ function forbiddenResponse(request: Request, env: Env): Response {
 }
 
 function toDigestDate(date: Date = new Date()): string {
-  const offsetMs = 8 * 60 * 60 * 1000;
+  // The report is generated at Beijing 06:00, so the digest day rolls over then.
+  const offsetMs = 2 * 60 * 60 * 1000;
   return new Date(date.getTime() + offsetMs).toISOString().slice(0, 10);
 }
 

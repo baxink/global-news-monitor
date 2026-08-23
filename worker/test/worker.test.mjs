@@ -168,6 +168,33 @@ function createDbMock(state) {
   };
 }
 
+function installFixedDate(isoString) {
+  const RealDate = globalThis.Date;
+  const fixedTime = new RealDate(isoString).getTime();
+
+  globalThis.Date = class FixedDate extends RealDate {
+    constructor(...args) {
+      if (args.length === 0) {
+        super(fixedTime);
+        return;
+      }
+      super(...args);
+    }
+
+    static now() {
+      return fixedTime;
+    }
+  };
+
+  return () => {
+    globalThis.Date = RealDate;
+  };
+}
+
+function currentDigestDate() {
+  return new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
 test('rejects write requests from untrusted origins', async () => {
   const mod = await loadModule('../src/index.ts');
   const env = {
@@ -226,9 +253,55 @@ test('reports the configured source count in meta even if the seeded table is st
   assert.equal(payload.digestCount, 3);
 });
 
+test('uses the previous digest date before the Beijing 06:00 scheduled report time', async () => {
+  const mod = await loadModule('../src/index.ts');
+  const restoreDate = installFixedDate('2026-05-15T17:30:00.000Z');
+  const state = {
+    dailyCardsByDate: new Map([
+      ['2026-05-15', new Map([['nature-news', createDailyCard({
+        digest_date: '2026-05-15',
+        source_id: 'nature-news',
+        section: 'news',
+        article_id: 'art_existing',
+        title_en: 'Existing title',
+        title_zh: '前一日报标题',
+        summary_en: 'Existing summary',
+        summary_zh: '前一日报摘要',
+        url: 'https://www.nature.com/articles/existing',
+        image_url: '',
+        published_at: '2026-05-15T00:00:00.000Z',
+        selected_at: '2026-05-15T22:00:00.000Z',
+        is_empty: 0,
+        media_name: 'Nature',
+      })]])],
+    ]),
+    recentArticleIdsBySource: new Map(),
+    mediaNameBySource: new Map([
+      ['nature-news', 'Nature'],
+    ]),
+  };
+  const db = createDbMock(state);
+  const env = {
+    DB: db,
+    AI: { run() { throw new Error('AI should not be used for reads'); } },
+    FRONTEND_ORIGIN: 'https://baxink.github.io',
+  };
+
+  try {
+    const response = await mod.default.fetch(new Request('https://example.com/api/daily'), env);
+    assert.equal(response.status, 200);
+
+    const payload = await response.json();
+    assert.equal(payload.digestDate, '2026-05-15');
+    assert.equal(payload.cards.find(card => card.sourceId === 'nature-news').title, '前一日报标题');
+  } finally {
+    restoreDate();
+  }
+});
+
 test('returns ordered daily cards and fills missing sources with empty placeholders', async () => {
   const mod = await loadModule('../src/index.ts');
-  const today = new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const today = currentDigestDate();
   const state = {
     dailyCardsByDate: new Map([
       [today, new Map([['nature-news', createDailyCard({
@@ -284,7 +357,7 @@ test('returns ordered daily cards and fills missing sources with empty placehold
 
 test('falls back to the legacy single digest row when card rows are not ready yet', async () => {
   const mod = await loadModule('../src/index.ts');
-  const today = new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const today = currentDigestDate();
   const state = {
     dailyCardsByDate: new Map(),
     legacyDailyDigestByDate: new Map([
@@ -358,7 +431,7 @@ test('rejects refresh requests without a sourceId', async () => {
 
 test('refreshes only the targeted source card', async () => {
   const mod = await loadModule('../src/index.ts');
-  const today = new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const today = currentDigestDate();
   const state = {
     dailyCardsByDate: new Map([
       [today, new Map([
